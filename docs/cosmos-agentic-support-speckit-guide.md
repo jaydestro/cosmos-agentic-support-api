@@ -254,7 +254,9 @@ Use GitHub Copilot CLI with Cosmos DB Agent Kit for implementation guidance. Run
 
 Use the latest upstream Agent Kit source at setup, record the resolved commit, and check the complete reviewed cosmosdb-best-practices skill into .github/skills/ for both local CLI and optional GitHub cloud workers. Verify discovery, referenced resources, and actual task-relevant loading in each used host. Do not require additional MCP servers. Include a fresh-checkout worker preflight and supported dependency setup if cloud coding is used; do not assume the developer's local plugins, secrets, or editor configuration exist there.
 
-Document local execution with Functions Core Tools and a compatible Cosmos DB emulator, plus record inspection through Data Explorer or the VS Code extension.
+Implement local testing and GitHub Actions CI with a compatible Linux Cosmos DB emulator image and the Azure Functions Core Tools local host, plus Azurite for host storage when needed. Provide checked-in setup, readiness, synthetic seeding, integration/end-to-end test, diagnostic capture, and owned-resource cleanup commands. CI must invoke the same test entry points used locally, exercising the real Functions HTTP endpoints and Cosmos DB trigger rather than only calling handlers directly. Record and verify the image, SDK, Core Tools, and binding-extension versions, including Functions trigger and leases compatibility. Keep unavailable checks blocked, not passed.
+
+Document Resolve's actual setup and test commands in the quickstart. Reference the previous emulator local/CI blog post for the general image lifecycle pattern instead of repeating that tutorial; it does not replace implementing this project's test runner. Include record inspection through Data Explorer or the VS Code extension.
 
 Create two GitHub Agentic Workflows:
 1. Contract/Cosmos implementation reviewer: evidence-backed findings on relevant specification, API, persistence, and test changes.
@@ -302,6 +304,8 @@ Custom checklists are reviewer-owned. A checked item means the requirement-quali
 Prioritize a complete case -> investigation -> proposal -> durable approval wait -> authorized approval -> one simulated credit -> persisted timeline vertical slice.
 
 Follow with rejection/revision, repository automation, and operational hardening. Include setup instructions and evidence capture in the relevant phases.
+
+Before the first vertical slice, include foundational tasks for the Linux Cosmos DB emulator image, Azure Functions Core Tools local host, Azurite when needed, and the shared local/CI test runner. Include readiness, synthetic fixtures, actual HTTP/trigger integration checks, bounded execution, diagnostic artifacts, and cleanup of owned resources. Use the same test entry points locally and in GitHub Actions CI. Keep emulator-backed deterministic checks, live-model tests, and isolated Azure verification separately labeled; unexecuted checks are blocked, not passed. The previous blog is a setup reference, not a substitute for these implementation and verification tasks.
 
 Include latest-source Agent Kit installation with recorded provenance and complete repository-scoped skills, host discovery/loading checks, and a fresh-worker preflight if cloud coding is used. Include approved time/credit/token allowances, usage accounting, budget-exhaustion and restart/concurrency tests, bounded retries, and measured cost evidence. Additional MCP servers are not required.
 ```
@@ -418,6 +422,7 @@ Do not fabricate workflow runs, deployments, measurements, or defects. Distingui
 
 ## Official references
 
+- [From Local Development to CI Workflows with the Azure Cosmos DB Emulator](https://devblogs.microsoft.com/cosmosdb/from-local-development-to-ci-workflows-with-the-azure-cosmos-db-emulator/)
 - [GitHub Copilot CLI command reference](https://docs.github.com/en/copilot/reference/cli-command-reference)
 - [Copilot CLI AI credit limits](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/set-session-limit)
 - [Cosmos DB Agent Kit source](https://github.com/AzureCosmosDB/cosmosdb-agent-kit)
