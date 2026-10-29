@@ -1,0 +1,53 @@
+# Private planning, blog drafts, and local evidence
+/.local/
+
+# Node.js dependencies and generated output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.cache/
+.npm/
+
+# Test output and runtime diagnostics
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+/.artifacts/
+*.log
+
+# Local secrets and configuration; sanitized templates remain trackable
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+local.settings.json
+local.settings.*.json
+!local.settings.example.json
+!local.settings.sample.json
+!local.settings.template.json
+*.local.bicepparam
+*.pem
+*.key
+*.pfx
+*.p12
+*.publishsettings
+
+# Azure Developer CLI environment state
+.azure/
+
+# Local Azure Storage emulator data
+.azurite/
+__azurite_db*__.json
+__blobstorage__/
+__queuestorage__/
+__tablestorage__/
+
+# Operating system and editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
