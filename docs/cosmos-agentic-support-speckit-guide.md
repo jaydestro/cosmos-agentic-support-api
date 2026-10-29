@@ -80,6 +80,8 @@ After the milestone finishes, export the session locally from CLI chat, using a 
 
 Keep raw transcripts, screenshots, check output, and editorial drafts under ignored `.local/blog/`. Review them for secrets and sensitive content even when they are ignored by Git. Do not create a shareable session link or gist automatically. Only separately reviewed, sanitized excerpts belong in published material, with approval before external publication. Label any work performed outside Copilot CLI accurately rather than presenting it as CLI execution.
 
+Maintain an ignored `.local/BUILD-DIARY.md` as the author's continuing build history. Read it before each local session or Spec Kit stage; after every meaningful change, decision, check, failure, commit, or blocker, append a dated entry and refresh the current state and stage tracker. Preserve history and distinguish planned work from executed results. This private diary is not a cloud-worker dependency: provide workers with a reviewed, sanitized task brief and repository artifacts, then record their actual results locally.
+
 ### Make Cosmos DB skills available to every worker
 
 Use the latest source from the default branch of [AzureCosmosDB/cosmosdb-agent-kit](https://github.com/AzureCosmosDB/cosmosdb-agent-kit) when setting up this project, not an older local installation or an assumed latest release. Resolve and record its exact commit and skill metadata version so the demonstrated build can be reproduced. Refresh through a reviewed change rather than automatically changing the skills during a run.
