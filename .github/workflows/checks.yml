@@ -1,0 +1,78 @@
+name: Resolve checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: resolve-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RESOLVE_E2E_BROWSER: chrome
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Install pinned Functions Core Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --max-time 180 \
+            https://github.com/Azure/azure-functions-core-tools/releases/download/4.16.0/Azure.Functions.Cli.linux-x64.4.16.0.zip \
+            --output "$RUNNER_TEMP/func.zip"
+          echo "c68c7780d94c7583157f7a7d1a05e0ec3e34057c3d55e4c7be71fc4aa0c23667  $RUNNER_TEMP/func.zip" | sha256sum --check
+          mkdir "$RUNNER_TEMP/func"
+          unzip -q "$RUNNER_TEMP/func.zip" -d "$RUNNER_TEMP/func"
+          chmod +x "$RUNNER_TEMP/func/func"
+          echo "$RUNNER_TEMP/func" >> "$GITHUB_PATH"
+      - name: Static checks, tests, audit, build and package
+        run: npm run check
+      - name: Compile infrastructure and test its safety invariants
+        run: |
+          set -euo pipefail
+          az bicep install --version v0.39.26
+          npm run infra:check
+          npm run test:infra
+      - name: Scan source and history with pinned Gitleaks
+        run: npm run scan:secrets
+      - name: Validate generated repository workflow locks with pinned compiler
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh extension install github/gh-aw --pin v1.0.1
+          npm run workflows:check
+      - name: Verify the breaking-change detector
+        run: npm run test:safety
+      - name: Check published API compatibility
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git cat-file -e "$BASE_SHA:contracts/openapi.yaml"; then
+            npm run contract:breaking -- --base "$BASE_SHA"
+          else
+            echo "::warning::BLOCKED: initial contract publication has no baseline; API compatibility is not yet proven."
+          fi
+      - name: Real host, emulator, trigger, leases and browser checks
+        run: npm run test:service
+      - name: Remove only owned test-stack resources
+        if: always()
+        run: npm run stack:down

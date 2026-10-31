@@ -5,6 +5,7 @@
 node_modules/
 dist/
 build/
+!tools/build/
 *.tsbuildinfo
 .cache/
 .npm/
@@ -15,6 +16,7 @@ coverage/
 test-results/
 playwright-report/
 /.artifacts/
+/infra/main.json
 *.log
 
 # Local secrets and configuration; sanitized templates remain trackable
