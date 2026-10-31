@@ -22,13 +22,15 @@ versions in use, and the commands that have actually been executed.
 | P03 | Investigation: cases, evidence reads, bounded runs, cited proposals, approval wait | **done** (emulator-backed; see "Verified commands") |
 | P04 | Decisions and execution: approve/reject/revise, outbox, provider, recovery | **done** (emulator-backed; see "Verified commands") |
 | P05 | Browser console and bounded live-model adapter | **local implementation verified**; real Entra/model checks blocked pending configuration and paid-run approval |
-| P06 | Shared local/CI checks and GitHub Actions gates | **local gates verified**; GitHub execution and published-baseline comparison blocked |
+| P06 | Shared local/CI checks and GitHub Actions gates | Prior full local gate passed; **actual GitHub check now fails on the newly published development-dependency advisory** |
 | P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | Bicep compiles; 4 local policy checks pass; **cloud validation/deployment/acceptance blocked pending approvals and configuration** |
-| P08 | Repository assistance (GitHub Agentic Workflows) and completion | 2 bounded workflows compiled/validated with pinned tooling; **GitHub execution/publication blocked** |
+| P08 | Repository assistance (GitHub Agentic Workflows) and completion | 2 bounded workflows compiled/validated; reviewer workflow registered but skipped by the approval gate; **actual agent execution remains blocked** |
 
 An unexecuted check is **blocked, not passed**. Working branch:
 `feat/resolve-serverless-sample`. Merge, deployment and testing were requested on
-2026-10-31; publication checks are in progress and no Azure provisioning has occurred.
+2026-10-31; the implementation is committed and pushed as
+[draft PR #1](https://github.com/jaydestro/cosmos-agentic-support-api/pull/1).
+It is not merged and no Azure provisioning has occurred.
 Sanitized delivery evidence is kept in [docs/blog-outcomes.md](docs/blog-outcomes.md).
 
 The complete local gate passed on 2026-10-30 (see P06). The publication/deployment
@@ -42,6 +44,9 @@ the full audit (one moderate advisory across 13 development-dependency entries).
 Production-only audit remains clean. Patch availability and any explicit,
 temporary exception must be resolved before treating publication checks as passed;
 the dated zero-vulnerability result below remains historical, not current.
+The [first GitHub check](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230031305)
+ran and failed at that audit after passing all 2,066 unit tests. This is not
+reported as a successful CI or deployment run.
 
 ## Short plan
 

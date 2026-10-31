@@ -62,6 +62,16 @@ No paid execution or success claim is implied by a prepared template or workflow
   the application's checks or claiming an unsuccessful run passed.
 - Actions are enabled with read-only default workflow permissions. No deployment
   variable or secret names were configured at this preflight.
+- The sanitized implementation was committed as
+  `f92db9fe72e932f9b7b3533d5205e06c538bfca7` and pushed to
+  `feat/resolve-serverless-sample` with public noreply author metadata and the
+  Copilot co-author trailer.
+- [Draft PR #1](https://github.com/jaydestro/cosmos-agentic-support-api/pull/1)
+  was opened against main. Its description explicitly records the failing audit
+  and the unexecuted cloud proof; it is not merged or represented as green.
+- Git warned that Windows checkout could rewrite generated files as CRLF. Explicit
+  LF attributes were added for workflow Markdown/locks, the action-pin manifest,
+  generated client types and the attribute file so regeneration remains portable.
 
 ### New audit result after the previous clean run
 
@@ -89,6 +99,20 @@ at the dependency audit. This is a real failed gate, not a passing deployment ch
   silent audit exception or blind downgrade was used. In particular, the legacy
   Redocly code calls minimatch as a function; blindly replacing it with the newer
   named-export API would be a compatibility risk.
+
+### First actual GitHub runs
+
+- [Resolve checks run 41230031305](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230031305)
+  ran on the draft PR and failed at the full dependency audit. Contract, typecheck,
+  lint and 2,066 unit tests passed in the GitHub-hosted Linux job. The audit failure
+  stopped later service/browser stages; yesterday's local service results are not
+  substituted for an unexecuted GitHub stage.
+- [Reviewer workflow run 41230031316](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230031316)
+  was registered but skipped by the explicit automation-approval gate. No agent or
+  detector inference is claimed to have run.
+- The PR merge state was `UNSTABLE`; it remained draft rather than bypassing the
+  failed check. Actions billing/credits are unmeasured here; observed workflow
+  execution is not a claim of zero cost.
 
 ### Evidence still required
 
