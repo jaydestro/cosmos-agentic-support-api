@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { run } from './process.ts';
 import { ROOT } from './stack.ts';
+import { checkWorkflowPins } from './workflow-pins.ts';
 
 const FILES = [
   '.github/workflows/contract-cosmos-review.lock.yml',
@@ -29,3 +30,5 @@ if (original.some((hash, index) => hash !== current[index])) {
   throw new Error('Generated workflow locks drifted. Review the compiler output and persist it using npm run workflows:compile.');
 }
 process.stdout.write('Generated workflow locks match compiler v1.0.1.\n');
+const pins = await checkWorkflowPins(join(ROOT, '.github', 'workflows'));
+process.stdout.write(`Checked ${String(pins.references.length)} full-SHA references in ${String(pins.files)} workflow files (${String(new Set(pins.references).size)} distinct references).\n`);

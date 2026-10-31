@@ -13,6 +13,11 @@ The authoritative requirements live in [.github/copilot-instructions.md](.github
 This README holds the short plan, the decisions made along the way, the actual layout, the
 versions in use, and the commands that have actually been executed.
 
+**Demo success criterion:** a successful, tested Azure deployment of Cosmos DB and
+the full API, with sound Cosmos partition/query/transaction/identity practices and
+evidence-backed GitHub Agentic Workflow benefits for the blog. Local checks and
+prepared infrastructure do not satisfy that criterion.
+
 ## Status
 
 | Stage | Scope | Status |
@@ -923,7 +928,10 @@ The repository workflows are **prepared locally, not executed on GitHub**:
   Bash. Its supported sandbox/tool allowlists and safe-output protections remain
   in place.
 - `npm run workflows:compile` regenerates locks. `npm run workflows:check` verifies
-  compiler version, compilation/validation and deterministic fingerprints.
+  compiler version, compilation/validation, deterministic fingerprints and full
+  40-character SHA references across handwritten YAML, generated locks and agentic
+  frontmatter. All 139 executable references (10 distinct references) were checked
+  and verified against their official repositories through GitHub MCP.
   Three unit checks verify compiled limits/read-only permissions and execute the
   actual README-only guard against accepted and rejected synthetic changes.
 
@@ -931,6 +939,24 @@ Before calling the full delivery complete, obtain publication and paid-run appro
 perform the real Azure checks above, and run both agentic workflows on GitHub.
 Enabling Copilot automation requires a separately approved scoped Copilot credential
 and usage budget; no token has been created or stored by this work.
+
+Official guidance consulted: [GitHub Agentic Workflows](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows),
+[quickstart](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/quickstart),
+[creating workflows](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/creating-github-agentic-workflows),
+and [secure workflow use](https://docs.github.com/en/actions/reference/security/secure-use).
+Markdown reviewability, isolated read-only agents, controlled safe outputs and
+bounded automation are intended benefits; quality, time and cost benefits must
+be demonstrated by actual runs before the blog presents them as measured outcomes.
+The repository is user-owned, so the organization-only built-in Copilot-token
+billing option is not assumed applicable.
+
+**Current Azure preflight blocker:** effective ARM permissions explicitly exclude
+`Microsoft.Authorization/roleAssignments/write`. The template needs storage and
+telemetry role grants, so a properly authorized deployment identity or an
+administrator bootstrap scoped to the dedicated demo resource group is required.
+Do not bypass this by reverting to account keys or disabling AAD ingestion.
+Three similarly named Entra registrations were inspected read-only; none has the
+required roles, scope or SPA redirects, and none was modified.
 
 ## Schema evolution
 

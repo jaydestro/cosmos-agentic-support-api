@@ -6,6 +6,10 @@ policy, proposes a cited credit, and waits for an authorized human. Deterministi
 executes one simulated credit after approval. Include rejection/revision, a paginated
 timeline, and operator recovery. Exclude real payments and real customer data.
 
+The demo goal is a successful, tested Azure deployment of Cosmos DB and the full
+API, showing Cosmos DB best practices and evidence-backed benefits of GitHub
+Agentic Workflows for a blog. Prepared YAML and emulator success are not Azure proof.
+
 ## Stack and Hosting
 
 - Use TypeScript, a currently supported GA Node.js runtime, and Azure Functions
@@ -155,6 +159,10 @@ these instructions during a question or documentation change does not start a bu
    usage/retry/concurrency. No production data, deployment credentials, auto-approval,
    or auto-merge. Compile Markdown to lock files with pinned tooling; never hand-author
    generated locks. Require actual GitHub runs before claiming workflow execution.
+    Pin every action and reusable-workflow `uses` reference to a full 40-character
+    commit SHA, including generated locks. Verify references against their official
+    repositories with GitHub MCP and consult the official GitHub Agentic Workflows
+    documentation. Keep these requirements intact during compiler regeneration.
 
 ## Completion and Change Safety
 

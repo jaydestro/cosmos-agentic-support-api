@@ -146,3 +146,45 @@ Azure has not been provisioned, and real cloud tests remain unexecuted.
 
 Coding-agent token/cost totals are unavailable here and therefore unknown, not zero.
 Runtime-model and repository-automation consumption must be tracked independently.
+
+## 2026-10-31: goal confirmation, immutable workflows and real Azure preflight
+
+The goal was explicitly reconfirmed: prove a successful Azure Cosmos DB/full-API
+deployment, demonstrate Cosmos best practices and evidence-backed agentic-workflow
+benefits, and feed the results into a blog. Repository-memory write attempts were
+rejected by the memory service; they are not claimed as saved. The requirements
+were instead recorded in the repository's mutable instruction file, not the
+read-only conversation attachment.
+
+- Read the official GitHub Agentic Workflows overview, quickstart, creation and
+  secure-use guidance. The official GitHub MCP verified the published workflow
+  source and the ten distinct action references in their canonical repositories.
+- All 139 executable `uses` references were already full 40-character SHAs.
+  An exhaustive regression gate now covers all six workflow surfaces, including
+  generated lock YAML and agentic frontmatter. It rejects tags, branches, shortened/
+  nonhex hashes, missing hashes and dynamic external references.
+- Focused policy tests: **15 passed**. ESLint, both project typechecks and
+  compiler/lock verification passed. Locks were not hand-edited.
+- This verification took longer than necessary because source pinning was
+  over-investigated; it was verification work, not Azure deployment progress.
+- The configured registry still could not supply minimatch 11.0.1. The official
+  source tag exists, but it contains no built `dist` tree and uses a preparation
+  build; a blind source override would not preserve the current locked install
+  and legacy API compatibility. No force update or audit exception was introduced.
+- Azure effective-permission inspection explicitly confirmed **no**
+  `Microsoft.Authorization/roleAssignments/write` permission. This is an actual
+  authorization blocker for the template's managed-identity host-storage and
+  telemetry grants, not merely an unanswered configuration question.
+- Group-inclusive role inspection found two active subscription assignments and
+  no resource-group-scoped assignments or existing Owner/RBAC-administrator grants.
+  No alternate already-authorized group scope was found. No role elevation,
+  account-key fallback or partial paid deployment was attempted.
+- Three similarly named Entra registrations were inspected read-only. They are
+  unrelated and expose none of the required application roles, delegated scope
+  or SPA redirects. Their names/identifiers are not copied into this log and they
+  were not reused or modified.
+- No paid Azure resources, real directory users or client secrets were created.
+  An administrator must bootstrap the necessary narrowly scoped role-assignment
+  authority, or an already-authorized deployment identity/context must be supplied,
+  before the secure deployment can succeed. Existing merge/deploy authorization
+  does not grant missing Azure permissions.
