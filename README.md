@@ -47,6 +47,11 @@ the dated zero-vulnerability result below remains historical, not current.
 The [first GitHub check](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230031305)
 ran and failed at that audit after passing all 2,066 unit tests. This is not
 reported as a successful CI or deployment run.
+The updated branch's
+[GitHub check](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230648040)
+confirmed the same outcome. No focused advisory/paid-limit decision was obtained;
+the merge/deploy instruction is recognized, but failing checks and unconfirmed
+deployment prerequisites have not been bypassed.
 
 ## Short plan
 

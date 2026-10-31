@@ -113,6 +113,25 @@ at the dependency audit. This is a real failed gate, not a passing deployment ch
 - The PR merge state was `UNSTABLE`; it remained draft rather than bypassing the
   failed check. Actions billing/credits are unmeasured here; observed workflow
   execution is not a claim of zero cost.
+- The tested line-ending/outcome revision was committed as
+  `65f3bd3d19803937ac8fcd8f190a66ba36b9bf57`.
+  [Its GitHub check 41230648040](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230648040)
+  again passed 2,066 unit tests and failed on the same moderate advisory.
+  [The corresponding reviewer run](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41230648065)
+  was again skipped, not counted as agent execution.
+
+### Decision boundary
+
+A focused decision form asked for an installable-patch requirement versus a
+72-hour exception scoped only to this moderate development advisory, and for the
+Azure target, numeric limits, real Entra setup and private seed-runner approval.
+The tool returned "user unavailable" rather than actual decisions. No exception,
+paid-limit confirmation, app-registration authorization or seed-runner approval
+was inferred from that response.
+
+The existing instruction to merge/deploy is recognized. The additional gates in
+the project instructions are not silently removed: main has not been updated,
+Azure has not been provisioned, and real cloud tests remain unexecuted.
 
 ### Evidence still required
 
