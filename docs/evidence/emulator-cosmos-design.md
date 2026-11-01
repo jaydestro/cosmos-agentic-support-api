@@ -2,7 +2,7 @@
 
 > Emulator evidence only. All identifiers are fictional. Request charges are the emulator's reported values and are not Azure billing measurements.
 
-Case `case_145bf52b15af7d62565ce31139f77180`, tenant `aurora`. Hierarchical partition key of `cases` is `[/tenantId, /caseId]`.
+Case `case_a353fb590c958afa696eac4b9dc63e00`, tenant `aurora`. Hierarchical partition key of `cases` is `[/tenantId, /caseId]`.
 
 ## Documents in the case partition
 
@@ -33,15 +33,15 @@ Stored case document:
 {
   "id": "case",
   "tenantId": "aurora",
-  "caseId": "case_145bf52b15af7d62565ce31139f77180",
+  "caseId": "case_a353fb590c958afa696eac4b9dc63e00",
   "type": "case",
   "schemaVersion": 1,
-  "sortKey": "2026-11-01T21:35:31.787Z~case_145bf52b15af7d62565ce31139f77180",
+  "sortKey": "2026-11-01T23:10:11.261Z~case_a353fb590c958afa696eac4b9dc63e00",
   "status": "credited",
   "category": "duplicate_charge",
   "accountId": "acct_aurora_0001",
-  "createdAt": "2026-11-01T21:35:31.787Z",
-  "updatedAt": "2026-11-01T21:35:33.221Z",
+  "createdAt": "2026-11-01T23:10:11.261Z",
+  "updatedAt": "2026-11-01T23:10:16.692Z",
   "createdBy": {
     "type": "user",
     "id": "211820aa-05ab-41ed-89e5-11232c6ee0c7"
@@ -65,11 +65,11 @@ Stored case document:
       "amountMinor": 4900,
       "currency": "USD"
     },
-    "approvalExpiresAt": "2026-11-04T21:35:32.525Z"
+    "approvalExpiresAt": "2026-11-04T23:10:15.960Z"
   },
   "nextSeq": 12,
-  "_etag": "\"b5d48227-2663-458b-a02a-ae9f0894894a\"",
-  "_ts": 1793568931
+  "_etag": "\"52bd985c-a082-4ecd-8f06-3856271290ca\"",
+  "_ts": 1793574616
 }
 ```
 
@@ -79,10 +79,10 @@ Stored proposal document:
 {
   "id": "proposal-1",
   "tenantId": "aurora",
-  "caseId": "case_145bf52b15af7d62565ce31139f77180",
+  "caseId": "case_a353fb590c958afa696eac4b9dc63e00",
   "type": "proposal",
   "schemaVersion": 1,
-  "workKey": "2026-11-01T21:35:32.525Z~case_145bf52b15af7d62565ce31139f77180~proposal-1",
+  "workKey": "2026-11-01T23:10:15.960Z~case_a353fb590c958afa696eac4b9dc63e00~proposal-1",
   "version": 1,
   "runId": "run-1",
   "kind": "credit",
@@ -109,25 +109,25 @@ Stored proposal document:
   },
   "findingCode": null,
   "evidenceAssessment": "consistent",
-  "digest": "sha256:42a9e17ac0f4b877699606686aa99af29ab2f989795a950f468a7b7e61d4b6b3",
-  "createdAt": "2026-11-01T21:35:32.525Z",
-  "approvalExpiresAt": "2026-11-04T21:35:32.525Z",
+  "digest": "sha256:9fbdd94ab784f3ef245238608f13c683fdc031f6a0e91a92f6494b73669de653",
+  "createdAt": "2026-11-01T23:10:15.960Z",
+  "approvalExpiresAt": "2026-11-04T23:10:15.960Z",
   "decision": {
-    "decisionId": "decision-case_145bf52b15af7d62565ce31139f77180-v1",
-    "caseId": "case_145bf52b15af7d62565ce31139f77180",
+    "decisionId": "decision-case_a353fb590c958afa696eac4b9dc63e00-v1",
+    "caseId": "case_a353fb590c958afa696eac4b9dc63e00",
     "proposalVersion": 1,
     "policyVersion": 2,
-    "proposalDigest": "sha256:42a9e17ac0f4b877699606686aa99af29ab2f989795a950f468a7b7e61d4b6b3",
+    "proposalDigest": "sha256:9fbdd94ab784f3ef245238608f13c683fdc031f6a0e91a92f6494b73669de653",
     "outcome": "approved",
     "reason": null,
     "decidedBy": {
       "type": "user",
       "id": "363e1dc9-3077-4415-8ec5-2300835432d1"
     },
-    "decidedAt": "2026-11-01T21:35:33.107Z"
+    "decidedAt": "2026-11-01T23:10:16.272Z"
   },
-  "_etag": "\"84befe1a-c00d-4cfd-9c11-4b4de4328efb\"",
-  "_ts": 1793568931
+  "_etag": "\"0bdcfd44-e492-4f2a-8294-0aab42f7370a\"",
+  "_ts": 1793574616
 }
 ```
 
@@ -158,33 +158,33 @@ Outbox document after the change-feed trigger ran:
 {
   "id": "out-credit-execute-v1",
   "tenantId": "aurora",
-  "caseId": "case_145bf52b15af7d62565ce31139f77180",
+  "caseId": "case_a353fb590c958afa696eac4b9dc63e00",
   "type": "outbox",
   "schemaVersion": 1,
-  "workKey": "2026-11-01T21:35:33.107Z~case_145bf52b15af7d62565ce31139f77180~out-credit-execute-v1",
+  "workKey": "2026-11-01T23:10:16.272Z~case_a353fb590c958afa696eac4b9dc63e00~out-credit-execute-v1",
   "kind": "credit.execute",
   "state": "completed",
   "attempts": 1,
   "maxAttempts": 5,
-  "notBefore": "2026-11-01T21:35:33.107Z",
+  "notBefore": "2026-11-01T23:10:16.272Z",
   "claimedUntil": null,
   "claimedBy": null,
   "payload": {
     "proposalVersion": 1,
-    "digest": "sha256:42a9e17ac0f4b877699606686aa99af29ab2f989795a950f468a7b7e61d4b6b3"
+    "digest": "sha256:9fbdd94ab784f3ef245238608f13c683fdc031f6a0e91a92f6494b73669de653"
   },
-  "createdAt": "2026-11-01T21:35:33.107Z",
-  "updatedAt": "2026-11-01T21:35:33.221Z",
-  "completedAt": "2026-11-01T21:35:33.221Z",
+  "createdAt": "2026-11-01T23:10:16.272Z",
+  "updatedAt": "2026-11-01T23:10:16.692Z",
+  "completedAt": "2026-11-01T23:10:16.692Z",
   "lastError": null,
-  "_etag": "\"d1e1a867-f0ef-4873-a177-8183d973f95f\"",
-  "_ts": 1793568931
+  "_etag": "\"22d529ff-507e-4e7e-93b2-757d3ae6671a\"",
+  "_ts": 1793574616
 }
 ```
 
-## Tenant listing (hierarchical prefix partition key `[tenantId]`, `TOP @n`)
+## Tenant listing (`WHERE c.tenantId = @tenantId`, no partition key option, `TOP @n`)
 
-1.00 RU for 1 cases, newest first, with no cross-tenant read.
+1.00 RU for 5 cases, newest first, with no cross-tenant read.
 
 ## Conditional write and create-only deduplication
 
@@ -194,26 +194,26 @@ Outbox document after the change-feed trigger ran:
 ## Eight concurrent identical approvals
 
 HTTP statuses returned (sorted): 202, 202, 202, 202, 202, 202, 202, 202.
-Provider ledger records for the case: **1** (key `credit-case_145bf52b15af7d62565ce31139f77180-v1`, reference `sim-2f83a041465b247f`).
+Provider ledger records for the case: **1** (key `credit-case_a353fb590c958afa696eac4b9dc63e00-v1`, reference `sim-85265d1cd21c9ef0`).
 Credit result: 4900 minor units USD, reconciled=false.
 
 Provider ledger document:
 
 ```json
 {
-  "id": "credit-case_145bf52b15af7d62565ce31139f77180-v1",
+  "id": "credit-case_a353fb590c958afa696eac4b9dc63e00-v1",
   "tenantId": "aurora",
   "type": "provider_credit",
   "schemaVersion": 1,
-  "caseId": "case_145bf52b15af7d62565ce31139f77180",
+  "caseId": "case_a353fb590c958afa696eac4b9dc63e00",
   "amount": {
     "amountMinor": 4900,
     "currency": "USD"
   },
-  "reference": "sim-2f83a041465b247f",
-  "createdAt": "2026-11-01T21:35:33.207Z",
-  "_etag": "\"f810d93b-eea4-4d28-8927-76d462f3bf02\"",
-  "_ts": 1793568931
+  "reference": "sim-85265d1cd21c9ef0",
+  "createdAt": "2026-11-01T23:10:16.677Z",
+  "_etag": "\"945fbab5-6176-43b0-b4f2-0dc1b4dea451\"",
+  "_ts": 1793574616
 }
 ```
 

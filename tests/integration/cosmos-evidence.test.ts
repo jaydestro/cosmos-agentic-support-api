@@ -71,8 +71,13 @@ describe('Cosmos DB design evidence (emulator)', () => {
     const outboxRead = await cases.item(creditOutboxId(), key).read<Doc>();
     const tenantList = await cases.items
       .query<Doc>(
-        { query: "SELECT TOP @n c.caseId, c.status FROM c WHERE c.type = 'case' ORDER BY c.createdAt DESC", parameters: [{ name: '@n', value: 5 }] },
-        { partitionKey: [TENANT] },
+        {
+          query: "SELECT TOP @n c.caseId, c.status FROM c WHERE c.tenantId = @tenantId AND c.type = 'case' ORDER BY c.sortKey DESC",
+          parameters: [
+            { name: '@n', value: 5 },
+            { name: '@tenantId', value: TENANT },
+          ],
+        },
       )
       .fetchAll();
 
@@ -149,7 +154,7 @@ describe('Cosmos DB design evidence (emulator)', () => {
     out(JSON.stringify(clean(outboxRead.resource ?? {}), null, 2));
     out('```');
     out();
-    out('## Tenant listing (hierarchical prefix partition key `[tenantId]`, `TOP @n`)');
+    out('## Tenant listing (`WHERE c.tenantId = @tenantId`, no partition key option, `TOP @n`)');
     out();
     out(`${ru(tenantList.requestCharge)} RU for ${String(tenantList.resources.length)} cases, newest first, with no cross-tenant read.`);
     out();
