@@ -29,7 +29,7 @@
     "test:safety": "node --test \"tests/safety/**/*.test.ts\"",
     "scan:secrets": "node tests/support/safety.ts secrets",
     "contract:breaking": "node tests/support/safety.ts breaking",
-    "infra:check": "az bicep lint --file infra/main.bicep && az bicep build --file infra/main.bicep --outfile infra/main.json",
+    "infra:check": "az bicep lint --file infra/main.bicep && az bicep build --file infra/main.bicep --outfile infra/main.json && az bicep lint --file infra/identities.bicep && az bicep build --file infra/identities.bicep --outfile infra/identities.json && az bicep lint --file infra/deployment-access.bicep && az bicep build --file infra/deployment-access.bicep --outfile infra/deployment-access.json",
     "test:infra": "node --test \"tests/infra/**/*.test.ts\"",
     "workflows:compile": "gh aw compile contract-cosmos-review docs-maintainer",
     "workflows:check": "node tests/support/workflows.ts",

@@ -78,3 +78,47 @@ it('the paid workflow is manual, main-only, OIDC-only and requires protected app
   assert.match(JSON.stringify(jobs), /prevent_self_review/);
   assert.doesNotMatch(JSON.stringify(jobs), /client-secret|publish-profile/);
 });
+
+it('identity bootstrap matches application naming, isolates three principals and binds deployment to the protected GitHub environment', async () => {
+  const identityTemplate = record(JSON.parse(await readFile(new URL('../../infra/identities.json', import.meta.url), 'utf8')));
+  const entries = identityTemplate['resources'];
+  assert.ok(Array.isArray(entries));
+  const declared = (entries as unknown[]).map(record);
+  const identities = declared.filter((entry) => entry['type'] === 'Microsoft.ManagedIdentity/userAssignedIdentities');
+  assert.equal(identities.length, 3);
+  assert.equal(new Set(identities.map((entry) => entry['name'])).size, 3);
+  for (const mainIdentity of resources.filter((entry) => entry['type'] === 'Microsoft.ManagedIdentity/userAssignedIdentities')) {
+    assert.ok(identities.some((entry) => entry['name'] === mainIdentity['name']), 'bootstrap does not duplicate the application or seed identity');
+  }
+  const trust = declared.find((entry) => entry['type'] === 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials');
+  assert.ok(trust);
+  assert.deepEqual(record(trust['properties']), {
+    issuer: 'https://token.actions.githubusercontent.com',
+    subject: 'repo:jaydestro/cosmos-agentic-support-api:environment:azure-demo',
+    audiences: ['api://AzureADTokenExchange'],
+  });
+  assert.ok(!declared.some((entry) => entry['type'] === 'Microsoft.Authorization/roleAssignments'), 'creation grants no implicit privileges');
+});
+
+it('administrator bootstrap grants only group-scoped deployment access and constrains IAM writes/deletes to the app identity and two roles', async () => {
+  const access = record(JSON.parse(await readFile(new URL('../../infra/deployment-access.json', import.meta.url), 'utf8')));
+  const entries = access['resources'];
+  assert.ok(Array.isArray(entries));
+  const grants = (entries as unknown[]).map(record);
+  assert.equal(grants.length, 2);
+  assert.ok(grants.every((entry) => entry['type'] === 'Microsoft.Authorization/roleAssignments' && entry['scope'] === undefined));
+  const constrained = grants.find((entry) => record(entry['properties'])['condition'] !== undefined);
+  assert.ok(constrained);
+  const properties = record(constrained['properties']);
+  assert.equal(properties['conditionVersion'], '2.0');
+  const condition = String(properties['condition']);
+  assert.match(condition, /roleAssignments\/write/);
+  assert.match(condition, /roleAssignments\/delete/);
+  assert.match(condition, /@Request\[Microsoft.Authorization\/roleAssignments:PrincipalId\]/);
+  assert.match(condition, /@Resource\[Microsoft.Authorization\/roleAssignments:PrincipalId\]/);
+  assert.doesNotMatch(condition, /\$\{/);
+  const variables = record(access['variables']);
+  assert.equal(variables['blobOwner'], 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b');
+  assert.equal(variables['metricsPublisher'], '3913510d-42f4-4e42-8a64-420c390055eb');
+  assert.doesNotMatch(JSON.stringify(access), /8e3af657-a8ff-443c-a75c-2fe8c4bcb635/, 'no Owner grant');
+});

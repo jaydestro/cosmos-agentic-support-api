@@ -188,3 +188,48 @@ read-only conversation attachment.
   authority, or an already-authorized deployment identity/context must be supplied,
   before the secure deployment can succeed. Existing merge/deploy authorization
   does not grant missing Azure permissions.
+
+## 2026-11-01: managed identities actually created
+
+The user explicitly requested creation of the required managed identity. The
+identity-only bootstrap was added to Bicep so it is reproducible and matches the
+future application deployment's naming.
+
+- Created the dedicated demo resource group in East US. No unrelated resources
+  or existing registrations were changed.
+- `infra/identities.bicep` passed lint/build, normal provider validation and what-if
+  before deployment. The `resolve-identities` deployment **Succeeded**.
+- Independent management-plane read-back verified exactly three identities:
+  application, reference seeder and deployment. Client IDs and principals were
+  present and distinct; private identifiers are not copied into this public log.
+- Verified the deployment identity's exact GitHub OIDC issuer, protected
+  `azure-demo` environment subject and token-exchange audience.
+- A repeat what-if showed **four NoChange resources**. Identity creation is
+  repeatable without duplicates or changes to the trust.
+- An actual second `resolve-identities-repeat` deployment also succeeded;
+  independent before/after read-back confirmed exactly three identities with
+  unchanged client IDs and principals. This is executed repeat evidence, not only
+  a what-if prediction.
+- The first local result parser encountered a Bicep warning mixed into JSON.
+  That was a log-parsing failure, not a deployment failure. Independent Azure
+  read-back, rather than treating the ambiguous CLI output as success, established
+  the actual succeeded state.
+- All three identities currently have **zero Azure RBAC grants**. Identity
+  creation does not inherit the creator's permissions or solve missing role-write
+  authority.
+- The administrator-access template limits deployment authority to the dedicated
+  group and IAM changes to two specific application-identity roles. Six compiled
+  infrastructure tests, typechecks and focused lint passed.
+- Bicep multiline strings did not interpolate role/principal values. An explicit
+  compiled-condition check caught that defect; placeholder replacement fixed it.
+  The corrected template passed provider condition/schema validation.
+- `ProviderNoRbac` validation deliberately excluded caller authorization and is
+  not claimed as authorization proof. Full `Provider` validation failed on both
+  required `roleAssignments/write` operations, confirming the remaining blocker.
+  No roles were granted, no key fallback was used, and no self-elevation was attempted.
+
+This is **successful managed-identity deployment**, not successful full API/Cosmos
+deployment. Functions, Cosmos DB, storage, telemetry and private networking have
+not been provisioned; no real API, cloud seed or live-model tests have run. An
+authorized administrator must complete the narrowly scoped access bootstrap before
+the deployment identity can execute the full protected deployment.

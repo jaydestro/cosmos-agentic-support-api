@@ -28,14 +28,15 @@ prepared infrastructure do not satisfy that criterion.
 | P04 | Decisions and execution: approve/reject/revise, outbox, provider, recovery | **done** (emulator-backed; see "Verified commands") |
 | P05 | Browser console and bounded live-model adapter | **local implementation verified**; real Entra/model checks blocked pending configuration and paid-run approval |
 | P06 | Shared local/CI checks and GitHub Actions gates | Prior full local gate passed; **actual GitHub check now fails on the newly published development-dependency advisory** |
-| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | Bicep compiles; 4 local policy checks pass; **cloud validation/deployment/acceptance blocked pending approvals and configuration** |
+| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | Identity-only Azure bootstrap succeeded; 6 local policy checks pass; **API/Cosmos deployment still blocked by required role grants and configuration** |
 | P08 | Repository assistance (GitHub Agentic Workflows) and completion | 2 bounded workflows compiled/validated; reviewer workflow registered but skipped by the approval gate; **actual agent execution remains blocked** |
 
 An unexecuted check is **blocked, not passed**. Working branch:
 `feat/resolve-serverless-sample`. Merge, deployment and testing were requested on
 2026-10-31; the implementation is committed and pushed as
 [draft PR #1](https://github.com/jaydestro/cosmos-agentic-support-api/pull/1).
-It is not merged and no Azure provisioning has occurred.
+It is not merged. The identity-only bootstrap described below has been provisioned;
+the Functions API, Cosmos DB, storage, telemetry and private network have not.
 Sanitized delivery evidence is kept in [docs/blog-outcomes.md](docs/blog-outcomes.md).
 
 The complete local gate passed on 2026-10-30 (see P06). The publication/deployment
@@ -795,9 +796,10 @@ selector matching both a work id and its `-g1` suffix. Exact work-id matching fi
 
 ## Deployment preparation and Azure proof gate (P07)
 
-**No Azure resources have been provisioned and no region has been selected.** The
-template requires explicit location, Entra tenant/API audience, SPA client and
-delegated scope parameters; no credentials or subscription identifiers are stored.
+**The identity-only bootstrap has been deployed in East US; the API and Cosmos DB
+have not been deployed.** The full template still requires explicit Entra tenant/
+API audience, SPA client and delegated scope parameters. No credentials or
+subscription identifiers are stored in source or public evidence.
 
 | Choice | Evidence and decision |
 |---|---|
@@ -805,7 +807,8 @@ delegated scope parameters; no credentials or subscription identifiers are store
 | azd 1.37.2 | Installed, but this topology has not been validated end to end through azd. Not claimed unsupported; not selected or scaffolded as a second deployment system. |
 
 `npm run infra:check` compiles the template to ignored `infra/main.json`.
-`npm run test:infra` passes four checks over the compiled template and deployment
+It also compiles the identity and administrator-access templates to ignored JSON.
+`npm run test:infra` passes six checks over the compiled templates and deployment
 workflow. These are **static policy checks**, not provider validation or Azure proof.
 The first compile caught a role-assignment loop dependent on runtime identity
 properties; the loop now uses deployment-time role/container identifiers.
@@ -957,6 +960,42 @@ administrator bootstrap scoped to the dedicated demo resource group is required.
 Do not bypass this by reverting to account keys or disabling AAD ingestion.
 Three similarly named Entra registrations were inspected read-only; none has the
 required roles, scope or SPA redirects, and none was modified.
+
+### Identity bootstrap: executed 2026-11-01
+
+`infra/identities.bicep` was linted, compiled, provider-validated and previewed, then
+deployed to the dedicated `rg-resolve-proof` group in East US. Deployment state was
+**Succeeded**. Independent read-back verified three distinct client IDs and
+principals: application, reference seeder and deployment identities. The application
+and seed names match `infra/main.bicep`, so the full deployment will reuse them.
+
+The deployment identity's federated trust was independently checked for the exact
+GitHub issuer, `repo:jaydestro/cosmos-agentic-support-api:environment:azure-demo`
+subject and `api://AzureADTokenExchange` audience. A repeat what-if showed four
+`NoChange` resources (three identities and the trust). An actual second deployment
+also succeeded with all three client IDs and principals unchanged. No keys or directory users
+were created. Each new identity currently has **zero effective Azure RBAC grants**.
+
+Creating an identity does not confer permission to assign roles. The current caller
+still cannot perform `Microsoft.Authorization/roleAssignments/write` in this group.
+An administrator with that authority must run:
+
+```sh
+az deployment group create --name resolve-access-bootstrap \
+  --resource-group rg-resolve-proof --template-file infra/deployment-access.bicep
+```
+
+The administrator must explicitly use the approved subscription. The template
+grants the deployment identity Contributor only in this demo group and constrains
+its role-assignment writes/deletes to Blob Data Owner and Monitoring Metrics
+Publisher for the application identity only. It grants no Owner role, no broader
+subscription authority, and no deployment privilege to the seeder or application.
+
+This administrator template passed Bicep lint/build and provider schema/condition
+validation with `ProviderNoRbac`, which **does not establish authorization**. Normal
+`Provider` validation then failed for both required grants with an authorization
+error. No grants were executed. This is the remaining IAM bootstrap dependency,
+not a claim that the full API is deployed.
 
 ## Schema evolution
 
