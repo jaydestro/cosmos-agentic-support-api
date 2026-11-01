@@ -44,6 +44,8 @@ export interface OutboxProcessorDeps {
   workerId: string;
   /** `diagnostic.echo` only proves the trigger and leases locally. It is refused on Azure. */
   allowDiagnostics: boolean;
+  /** When set, the trigger ignores outbox items of any other tenant, so a stray or fixture document is never executed. */
+  tenants?: readonly string[];
   sleep?: (ms: number) => Promise<void>;
   limits?: OutboxLimits;
   /**
@@ -172,7 +174,9 @@ export function createOutboxProcessor(deps: OutboxProcessorDeps): OutboxProcesso
       const unique = new Map<string, OutboxDoc>();
       for (const change of changes) {
         const doc = parseOutboxDoc(change);
-        if (doc !== null) unique.set(`${doc.tenantId}|${doc.caseId}|${doc.id}`, doc);
+        if (doc !== null && (deps.tenants === undefined || deps.tenants.includes(doc.tenantId))) {
+          unique.set(`${doc.tenantId}|${doc.caseId}|${doc.id}`, doc);
+        }
       }
       const queue = [...unique.values()];
       const outcomes: ProcessOutcome[] = [];

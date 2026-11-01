@@ -38,6 +38,7 @@ function createRuntime(): Runtime {
       logger,
       workerId: `w-${String(process.pid)}-${randomBytes(4).toString('hex')}`,
       allowDiagnostics: config.env !== 'azure',
+      tenants: config.env === 'azure' ? config.tenants : [...config.tenants, 'diagnostics'],
       onPoisoned: createPoisonNotifier({ cases: services.cases, clock: services.clock }),
     });
     return {
