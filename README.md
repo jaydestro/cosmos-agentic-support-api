@@ -27,9 +27,19 @@ prepared infrastructure do not satisfy that criterion.
 | P03 | Investigation: cases, evidence reads, bounded runs, cited proposals, approval wait | **done** (emulator-backed; see "Verified commands") |
 | P04 | Decisions and execution: approve/reject/revise, outbox, provider, recovery | **done** (emulator-backed; see "Verified commands") |
 | P05 | Browser console and bounded live-model adapter | **local implementation verified**; real Entra/model checks blocked pending configuration and paid-run approval |
-| P06 | Shared local/CI checks and GitHub Actions gates | Prior full local gate passed; **actual GitHub check now fails on the newly published development-dependency advisory** |
-| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | Identity-only Azure bootstrap succeeded; 6 local policy checks pass; **API/Cosmos deployment still blocked by required role grants and configuration** |
-| P08 | Repository assistance (GitHub Agentic Workflows) and completion | 2 bounded workflows compiled/validated; reviewer workflow registered but skipped by the approval gate; **actual agent execution remains blocked** |
+| P06 | Shared local/CI checks and GitHub Actions gates | **passed on GitHub** ([Resolve checks](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362319982)); the dev-only audit advisory is an explicit, dated exception in `tests/support/audit.ts`, not hidden |
+| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | **Deployed and proven on Azure (East US)** with a keys fallback and no Entra app registration; see [docs/evidence/azure-proof.md](docs/evidence/azure-proof.md). OIDC deployment, real Entra sign-in and `supportingAuth=identity` are **not proven** |
+| P08 | Repository assistance (GitHub Agentic Workflows) and completion | Both workflows **ran on GitHub** (3 executed runs; skipped runs not counted); the agent failed `authentication_failed` in 2 of 3 and no output was produced for a human to accept; see [docs/evidence/github-agentic-workflows.md](docs/evidence/github-agentic-workflows.md) |
+
+### Delivery update (2026-11-01)
+
+- Node **24.22.2** local gate: `npm run check` (2,077 unit tests), 130 of 130 service-backed integration tests and 41 of 41 browser tests pass against the real emulator, Azurite and Functions host.
+- [PR #1](https://github.com/jaydestro/cosmos-agentic-support-api/pull/1) was merged to `main` (the workflows read their Markdown from the base branch). Follow-up: [PR #3](https://github.com/jaydestro/cosmos-agentic-support-api/pull/3).
+- Azure: Flex Consumption + serverless Cosmos DB with private endpoint and managed identity, seeded from inside the VNet (56 documents, then 0 created / 56 unchanged), one provider credit under 8 concurrent approvals, real 403/401 denials. Found and fixed an Azure-only HTTP 400 on prefix-partition-key tenant listings that the emulator accepted.
+- Evidence and the tutorial: [docs/evidence](docs/evidence/) and [docs/blog/resolve-cosmos-db-agentic-workflows-tutorial.md](docs/blog/resolve-cosmos-db-agentic-workflows-tutorial.md). Costs not yet posted are marked "not measured".
+- Commands added: `npm run audit:gate`; `pwsh tools/azure/run-in-vnet.ps1 -ResourceGroup <rg> -EntraTenantId <id> -ApiAudience <aud>` (seed twice, then the in-network proof; needs `npm run build && npm run package` first).
+
+The older status notes below are kept as history; where they say "blocked" for items listed above, this update supersedes them.
 
 An unexecuted check is **blocked, not passed**. Working branch:
 `feat/resolve-serverless-sample`. Merge, deployment and testing were requested on
