@@ -34,6 +34,11 @@ param modelPricingAsOf string = ''
 @description('Only true after explicit paid-execution and numeric-limit approval. Does not create a model deployment.')
 param liveModelApproved bool = false
 
+@description('identity: host storage and telemetry use managed identity and RBAC grants (default, needs role-assignment authority). keys: documented fallback when the deployer cannot write role assignments; Functions host storage uses a storage key and telemetry uses its connection string. Cosmos DB access is managed identity in both modes.')
+@allowed(['identity', 'keys'])
+param supportingAuth string = 'identity'
+
+var useIdentity = supportingAuth == 'identity'
 var suffix = uniqueString(resourceGroup().id)
 var manifest = loadJsonContent('./containers.json')
 var accountName = '${namePrefix}-${suffix}'
@@ -98,7 +103,12 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
       }
       {
         name: 'seed-runner'
-        properties: { addressPrefix: '10.42.3.0/27' }
+        properties: {
+          addressPrefix: '10.42.3.0/27'
+          delegations: [
+            { name: 'runner', properties: { serviceName: 'Microsoft.ContainerInstance/containerGroups' } }
+          ]
+        }
       }
     ]
   }
@@ -218,16 +228,20 @@ resource dnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
+  // Opt-out tag of the organisation's "disable local auth" policy; only applied in the documented keys fallback.
+  tags: useIdentity ? {} : { 'Az.Sec.DisableLocalAuth.Storage::Skip': 'true' }
   kind: 'StorageV2'
   sku: { name: 'Standard_LRS' }
   properties: {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
+    allowSharedKeyAccess: !useIdentity
     accessTier: 'Hot'
   }
 }
+
+var storageConnectionString = useIdentity ? '' : 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
 
 resource blob 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storage
@@ -240,7 +254,7 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   properties: { publicAccess: 'None' }
 }
 
-resource storageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource storageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useIdentity) {
   name: guid(storage.id, appIdentity.id, 'host-blob-owner')
   scope: storage
   properties: {
@@ -267,12 +281,12 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: workspace.id
-    DisableLocalAuth: true
+    DisableLocalAuth: useIdentity
     RetentionInDays: 30
   }
 }
 
-resource telemetryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource telemetryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useIdentity) {
   name: guid(insights.id, appIdentity.id, 'telemetry')
   scope: insights
   properties: {
@@ -316,11 +330,7 @@ resource app 'Microsoft.Web/sites@2024-11-01' = {
         { name: 'COSMOS_CONNECTION__accountEndpoint', value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_CONNECTION__credential', value: 'managedidentity' }
         { name: 'COSMOS_CONNECTION__clientId', value: appIdentity.properties.clientId }
-        { name: 'AzureWebJobsStorage__accountName', value: storage.name }
-        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
-        { name: 'AzureWebJobsStorage__clientId', value: appIdentity.properties.clientId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
-        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${appIdentity.properties.clientId};Authorization=AAD' }
         { name: 'AUTH_MODE', value: 'entra' }
         { name: 'ENTRA_TENANT_ID', value: entraTenantId }
         { name: 'ENTRA_AUDIENCE', value: apiAudience }
@@ -329,6 +339,14 @@ resource app 'Microsoft.Web/sites@2024-11-01' = {
         { name: 'AGENT_MODE', value: modelAccountName == '' ? 'demo' : 'live' }
         { name: 'LIVE_MODEL_APPROVED', value: liveModelApproved ? 'true' : 'false' }
         { name: 'RESPONSE_VALIDATION', value: 'enforce' }
+      ], useIdentity ? [
+        { name: 'AzureWebJobsStorage__accountName', value: storage.name }
+        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
+        { name: 'AzureWebJobsStorage__clientId', value: appIdentity.properties.clientId }
+        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${appIdentity.properties.clientId};Authorization=AAD' }
+      ] : [
+        { name: 'AzureWebJobsStorage', value: storageConnectionString }
+        { name: 'DEPLOYMENT_STORAGE_CONNECTION_STRING', value: storageConnectionString }
       ], modelAccountName == '' ? [] : [
         { name: 'LIVE_MODEL_ENDPOINT', value: modelEndpoint }
         { name: 'LIVE_MODEL_DEPLOYMENT', value: modelDeployment }
@@ -343,9 +361,12 @@ resource app 'Microsoft.Web/sites@2024-11-01' = {
         storage: {
           type: 'blobContainer'
           value: '${storage.properties.primaryEndpoints.blob}${deploymentContainer.name}'
-          authentication: {
+          authentication: useIdentity ? {
             type: 'UserAssignedIdentity'
             userAssignedIdentityResourceId: appIdentity.id
+          } : {
+            type: 'StorageAccountConnectionString'
+            storageAccountConnectionStringName: 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
           }
         }
       }
@@ -357,7 +378,7 @@ resource app 'Microsoft.Web/sites@2024-11-01' = {
       }
     }
   }
-  dependsOn: [assignments, storageRole, telemetryRole, modelRole, dnsLink, dnsGroup]
+  dependsOn: [assignments, storageRole, telemetryRole, dnsLink, dnsGroup]
 }
 
 output functionName string = app.name

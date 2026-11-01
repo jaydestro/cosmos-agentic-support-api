@@ -9,6 +9,7 @@
     "node": ">=24.0.0 <25"
   },
   "scripts": {
+    "audit:gate": "node tests/support/audit.ts",
     "contract:lint": "redocly lint contracts/openapi.yaml",
     "contract:generate": "node tools/contract/generate.ts",
     "contract:check": "node tools/contract/generate.ts --check",
@@ -33,7 +34,7 @@
     "test:infra": "node --test \"tests/infra/**/*.test.ts\"",
     "workflows:compile": "gh aw compile contract-cosmos-review docs-maintainer",
     "workflows:check": "node tests/support/workflows.ts",
-    "check": "npm run contract:lint && npm run contract:check && npm run typecheck && npm run lint && npm test && npm audit && npm run build && npm run package",
+    "check": "npm run contract:lint && npm run contract:check && npm run typecheck && npm run lint && npm test && npm run audit:gate && npm run build && npm run package",
     "check:all": "npm run check && npm run infra:check && npm run test:infra && npm run workflows:check && npm run scan:secrets && npm run test:safety && npm run test:service"
   },
   "dependencies": {

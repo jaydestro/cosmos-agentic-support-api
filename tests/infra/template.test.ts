@@ -60,7 +60,8 @@ it('uses separate application and seed identities, container-scoped data roles a
   assert.match(JSON.stringify(assignments), /\/dbs\//);
   assert.match(JSON.stringify(assignments), /\/colls\//);
   const storage = record(resource('Microsoft.Storage/storageAccounts')['properties']);
-  assert.equal(storage['allowSharedKeyAccess'], false);
+  assert.equal(storage['allowSharedKeyAccess'], "[not(variables('useIdentity'))]");
+  assert.equal(record(record(template['parameters'])['supportingAuth'])['defaultValue'], 'identity', 'identity-only host storage stays the default');
   assert.equal(storage['allowBlobPublicAccess'], false);
   assert.match(JSON.stringify(record(template['variables'])['roles']), /changeFeed/);
   assert.equal(record(record(template['parameters'])['liveModelApproved'])['defaultValue'], false);

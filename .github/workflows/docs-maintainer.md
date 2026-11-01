@@ -5,6 +5,7 @@ on:
 if: github.ref == 'refs/heads/main' && vars.RESOLVE_REPOSITORY_AUTOMATION_APPROVED == 'true'
 permissions:
   contents: read
+  copilot-requests: write
 engine:
   id: copilot
   harness:

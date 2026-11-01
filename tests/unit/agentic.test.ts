@@ -42,7 +42,7 @@ for (const name of ['contract-cosmos-review', 'docs-maintainer']) {
     const lock = record(parse(await readFile(new URL(`../../.github/workflows/${name}.lock.yml`, import.meta.url), 'utf8')));
     const jobs = record(lock['jobs']);
     const permissions = record(record(jobs['agent'])['permissions']);
-    assert.ok(Object.values(permissions).every((value) => value === 'read' || value === 'none'));
+    assert.ok(Object.entries(permissions).every(([scope, value]) => value === 'read' || value === 'none' || (scope === 'copilot-requests' && value === 'write')));
     assert.equal(record(jobs['safe_outputs'])['timeout-minutes'], 5);
     const stepsInput: unknown = record(jobs['agent'])['steps'];
     assert.ok(Array.isArray(stepsInput));

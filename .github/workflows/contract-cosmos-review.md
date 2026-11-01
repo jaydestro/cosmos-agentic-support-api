@@ -8,6 +8,7 @@ if: vars.RESOLVE_REPOSITORY_AUTOMATION_APPROVED == 'true'
 permissions:
   contents: read
   pull-requests: read
+  copilot-requests: write
 engine:
   id: copilot
   harness:
