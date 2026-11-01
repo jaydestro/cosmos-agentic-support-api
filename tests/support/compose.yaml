@@ -1,0 +1,42 @@
+# Local and CI dependencies for the Resolve sample. Used only through tests/support/stack.ts, which
+# supplies every variable below with freshly reserved ports and per-run keys.
+#
+# Both images are pinned by digest. Ports are published on loopback only.
+name: resolve-stack
+
+services:
+  cosmos:
+    # Azure Cosmos DB vNext emulator in plain-HTTP mode. The emulator advertises its own address, so the
+    # in-container port must equal the published port.
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator@sha256:db53613dae19d0a3d5ad50688d14aa6e957af082dafea56b52e1bd3a6b3f1406
+    labels:
+      resolve.owner: ${RESOLVE_STACK_ID:?set by tests/support/stack.ts}
+    environment:
+      PROTOCOL: http
+      PORT: ${COSMOS_GATEWAY_PORT:?set by tests/support/stack.ts}
+      ENABLE_EXPLORER: "false"
+      ENABLE_TELEMETRY: "false"
+    ports:
+      - "127.0.0.1:${COSMOS_GATEWAY_PORT}:${COSMOS_GATEWAY_PORT}"
+      - "127.0.0.1:${COSMOS_HEALTH_PORT:?set by tests/support/stack.ts}:8080"
+
+  azurite:
+    # Storage emulator for the Functions host (AzureWebJobsStorage). The account key is random per run.
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
+    labels:
+      resolve.owner: ${RESOLVE_STACK_ID:?set by tests/support/stack.ts}
+    environment:
+      AZURITE_ACCOUNTS: resolvelocal:${AZURITE_KEY:?set by tests/support/stack.ts}
+    command:
+      - azurite
+      - --blobHost
+      - 0.0.0.0
+      - --queueHost
+      - 0.0.0.0
+      - --tableHost
+      - 0.0.0.0
+      - --skipApiVersionCheck
+    ports:
+      - "127.0.0.1:${AZURITE_BLOB_PORT:?set by tests/support/stack.ts}:10000"
+      - "127.0.0.1:${AZURITE_QUEUE_PORT:?set by tests/support/stack.ts}:10001"
+      - "127.0.0.1:${AZURITE_TABLE_PORT:?set by tests/support/stack.ts}:10002"

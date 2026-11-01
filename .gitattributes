@@ -1,0 +1,6 @@
+.github/workflows/*.lock.yml linguist-generated=true
+.gitattributes text eol=lf
+.github/workflows/*.md text eol=lf
+.github/workflows/*.lock.yml text eol=lf
+.github/aw/actions-lock.json text eol=lf
+contracts/generated/*.d.ts text eol=lf

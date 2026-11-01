@@ -1,0 +1,131 @@
+name: Azure proof (approval gated)
+on:
+  workflow_dispatch:
+    inputs:
+      approve_paid_limits:
+        description: Approve README execution limits and the separately reviewed regional cost estimate
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: resolve-azure-proof
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.ref == 'refs/heads/main' && inputs.approve_paid_limits && vars.AZURE_COST_ESTIMATE_APPROVED == 'true'
+    environment: azure-demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      API_AUDIENCE: ${{ vars.ENTRA_API_AUDIENCE }}
+      CONSOLE_CLIENT_ID: ${{ vars.CONSOLE_ENTRA_CLIENT_ID }}
+      CONSOLE_SCOPE: ${{ vars.CONSOLE_API_SCOPE }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Require protected environment and configured non-secret inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in LOCATION RESOURCE_GROUP TENANT_ID API_AUDIENCE CONSOLE_CLIENT_ID CONSOLE_SCOPE; do
+            test -n "${!name}" || { echo "::error::Missing $name"; exit 1; }
+          done
+          [[ "$LOCATION" =~ ^[a-z0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/environments/azure-demo" |
+            jq -e 'any(.protection_rules[]; .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length) > 0)'
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate region, runtime, infrastructure and preview changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          az bicep install --version v0.39.26
+          az functionapp list-flexconsumption-locations -o json |
+            jq -e --arg region "$LOCATION" 'any(.[]; .name == $region)'
+          az functionapp list-flexconsumption-runtimes --location "$LOCATION" --runtime node -o json |
+            jq -e 'any(.[]; (.version | tostring) == "24")'
+          az deployment group validate --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
+            --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE"
+          az deployment group what-if --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
+            --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE"
+
+  deploy:
+    needs: preview
+    environment: azure-demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      API_AUDIENCE: ${{ vars.ENTRA_API_AUDIENCE }}
+      CONSOLE_CLIENT_ID: ${{ vars.CONSOLE_ENTRA_CLIENT_ID }}
+      CONSOLE_SCOPE: ${{ vars.CONSOLE_API_SCOPE }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify the environment still requires independent approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/azure-demo" |
+            jq -e 'any(.protection_rules[]; .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length) > 0)'
+      - name: Build and verify the exact reviewed revision
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run check
+          npm run scan:secrets
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Provision approved infrastructure
+        id: provision
+        run: |
+          set -euo pipefail
+          az bicep install --version v0.39.26
+          app=$(az deployment group create --name resolve-proof --mode Incremental \
+            --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
+            --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" \
+            --query properties.outputs.functionName.value -o tsv)
+          test -n "$app"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+      - name: Deploy the Linux-built package through Flex OneDeploy
+        uses: Azure/functions-action@c5060b3b8bb1ebbcb531abd00c822ecbaa8ea656 # v1
+        with:
+          app-name: ${{ steps.provision.outputs.app }}
+          package: .artifacts/package
+          sku: flexconsumption
+          remote-build: false
+      - name: Report verification boundary
+        run: echo "::notice::Deployment is not Azure verification. Run the separate identity/network/seed acceptance checks."

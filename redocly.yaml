@@ -1,0 +1,11 @@
+extends:
+  - recommended-strict
+
+telemetry: off
+
+rules:
+  # The repository has no LICENSE file yet; choosing one is the owner's decision.
+  info-license: off
+  # /health and /ready are anonymous and accept no input. Every other operation's
+  # 401/403 declarations are asserted by tests/unit/contract.test.ts.
+  operation-4xx-response: off

@@ -1,0 +1,26 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic request idempotency key and intentionally malformed base64 cursor, not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/integration/foundation\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^it-key-0123456789abcdef$''', '''^bm90LWEtY3Vyc29y$''']
+
+[[allowlists]]
+description = "Fixed synthetic idempotency keys in handler tests, not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/unit/case-handlers\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^key-0123456789abcdef$''', '''^key-fedcba9876543210$''']
+
+[[allowlists]]
+description = "Fixed synthetic browser idempotency key, not a credential"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/unit/web-forms\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^ui-0123456789abcdef01234567$''']

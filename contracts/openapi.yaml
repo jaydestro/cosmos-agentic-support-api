@@ -1,0 +1,1642 @@
+openapi: 3.1.0
+info:
+  title: Resolve API
+  version: 1.0.0
+  summary: Synthetic SaaS billing-dispute sample (simulated credits only).
+  description: |
+    Resolve lets a support representative submit a billing dispute, lets an agent investigate
+    fictional invoices against a versioned credit policy, and lets an authorized human approve or
+    reject the cited proposal. After approval, deterministic code issues exactly one **simulated**
+    credit. No real payments or real customer data exist anywhere in this sample.
+
+    ## Compatibility rules (v1)
+
+    Within `1.x` only **additive** changes are allowed: new operations, new optional request
+    fields, new response fields, new values of the open `kind` strings (clients must tolerate
+    unknown values). Removing or renaming operations, fields, paths or error codes, tightening
+    request validation, making an optional field required, or changing a type is **breaking** and
+    needs `/api/v2`. `operationId` values are stable identifiers. Response bodies of this
+    contract set `additionalProperties: false`, so the server cannot emit fields that are not
+    documented here; clients must still ignore unknown response fields.
+
+    ## Conventions
+
+    * Errors are `application/problem+json` (`Problem`) with a stable machine `code`.
+    * Any operation can also fail with `500 internal_error` or `503 dependency_unavailable` as a
+      `Problem` that carries a correlation id and no internals; these are not repeated per
+      operation. `503` and `429` may carry `Retry-After`.
+    * Lists return `{ items, continuationToken }`. The token is an opaque keyset cursor; pass it
+      back unchanged. `null` means the last page. Tokens are scoped by the caller's tenant on
+      every request, so a token cannot widen access. A token names a position, not a one-time
+      ticket: passing it again returns what follows that position as the list is now, so a client
+      can poll the end of a list that is still growing. Timeline entries are append-only and ordered by
+      `seq`, so what a client has already read from them does not change. Usage events are the
+      exception: see `listRunUsageEvents`.
+    * Long-running work returns `202 Accepted` with a `Location` header and `Retry-After`.
+    * `POST /cases` requires an `Idempotency-Key` header (16-64 characters of `A-Za-z0-9._~-`).
+      The key is scoped to (tenant, caller, key). The same key with identical input replays the
+      original `202` with `Idempotency-Replayed: true`; the same key with different input returns
+      `409 idempotency_key_reused`. Keys live as long as the case they created.
+    * Every response carries `X-Correlation-Id` (use it when reporting problems).
+    * Request bodies are `application/json` of at most 16 KiB and must declare their size with a
+      `Content-Length` header (`411 length_required` otherwise; chunked uploads are not supported).
+      Unknown query parameters and unknown body properties are rejected with
+      `400 validation_failed`.
+    * Authorization uses Entra access tokens (`access_as_user` scope). Application tenants and
+      roles come from app roles `Resolve.<Role>.<tenant>`; see `x-resolve-roles` per operation.
+servers:
+  - url: /api
+    description: Same origin as the console
+tags:
+  - name: Session
+    description: Identity and runtime mode of the caller.
+  - name: Cases
+    description: Dispute submission, listing, detail and timeline.
+  - name: Investigations
+    description: Bounded agent runs and their persisted usage.
+  - name: Evidence
+    description: Allowlisted, tenant-scoped reads of accounts, invoices and credit policies.
+  - name: Proposals
+    description: Cited proposals and the human decision on them.
+  - name: Credits
+    description: Results of the simulated credit.
+  - name: Operator
+    description: Inspection and recovery of waiting, failed, poison, recoverable and budget-exhausted work.
+  - name: Health
+    description: Minimal anonymous probes.
+security:
+  - entra: [access_as_user]
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [Health]
+      summary: Liveness (minimal, anonymous)
+      security: []
+      responses:
+        '200':
+          description: The host is running.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              examples:
+                ok: { value: { status: ok } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /ready:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      summary: Readiness (minimal, anonymous)
+      description: Reports only `ok` or `unavailable`. No dependency details are exposed.
+      security: []
+      responses:
+        '200':
+          description: Dependencies are reachable.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503':
+          description: A dependency is unavailable.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              examples:
+                unavailable: { value: { status: unavailable } }
+  /session:
+    get:
+      operationId: getSession
+      tags: [Session]
+      summary: Who am I, and which modes are active
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The validated principal and the active runtime modes.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+              examples:
+                representative:
+                  value:
+                    principal: { principalId: 00000000-0000-4000-8000-0000000000a1, tenantId: aurora, roles: [Representative] }
+                    environment: { agentMode: demo, liveAvailable: false, liveBlockedReason: live_not_approved, simulatedCredits: true, apiVersion: 1.0.0 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /cases:
+    post:
+      operationId: createCase
+      tags: [Cases]
+      summary: Submit a dispute (asynchronous, idempotent)
+      x-resolve-roles: [Representative]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCaseRequest' }
+            examples:
+              duplicateCharge:
+                value:
+                  accountId: acct_aurora_0001
+                  invoiceIds: [inv_aurora_0001_a, inv_aurora_0001_b]
+                  category: duplicate_charge
+                  requestedCredit: { amountMinor: 4900, currency: USD }
+                  description: I was charged twice for the March plan.
+      responses:
+        '202':
+          description: Accepted. The investigation is queued and will run asynchronously.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+            Location:
+              description: URL of the new case.
+              schema: { type: string }
+            Retry-After:
+              description: Suggested polling interval in seconds.
+              schema: { type: integer }
+            Idempotency-Replayed:
+              description: '`true` when this response replays an earlier identical request.'
+              schema: { type: string, enum: ['true', 'false'] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      operationId: listCases
+      tags: [Cases]
+      summary: List the tenant's cases, newest first
+      x-resolve-roles: [Representative, Approver, Operator]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ContinuationToken'
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/CaseStatus' }
+      responses:
+        '200':
+          description: One page of cases.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /cases/{caseId}:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: getCase
+      tags: [Cases]
+      summary: Case detail with latest run, proposal and credit result
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The case.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: getCaseTimeline
+      tags: [Cases]
+      summary: Ordered timeline (oldest first), paginated
+      x-resolve-roles: [Representative, Approver, Operator]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - $ref: '#/components/parameters/ContinuationToken'
+      responses:
+        '200':
+          description: One page of timeline items ordered by `seq`.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TimelinePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/runs:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: listInvestigationRuns
+      tags: [Investigations]
+      summary: Investigation runs of the case (one per revision)
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: All runs of the case (at most one per revision).
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/runs/{runId}:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getInvestigationRun
+      tags: [Investigations]
+      summary: Run status, limits and persisted usage counters
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The run.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/runs/{runId}/usage:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: listRunUsageEvents
+      tags: [Investigations]
+      summary: Per-call usage events (failed and ambiguous calls included)
+      x-resolve-roles: [Representative, Approver, Operator]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ContinuationToken'
+      responses:
+        '200':
+          description: |
+            One page of usage events ordered by `seq`. A call is recorded as `reserved` before it starts
+            and the same event (same `eventId` and `seq`) is updated in place when the call settles, so an
+            event that was read while `reserved` must be read again to see its outcome.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageEventPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/proposals:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: listProposals
+      tags: [Proposals]
+      summary: Proposal versions of the case (bounded by the revision limit)
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: All proposal versions, oldest first.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProposalList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/proposals/{version}:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - $ref: '#/components/parameters/ProposalVersion'
+    get:
+      operationId: getProposal
+      tags: [Proposals]
+      summary: One proposal version with its citations
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The proposal.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /cases/{caseId}/proposals/{version}/approve:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - $ref: '#/components/parameters/ProposalVersion'
+    post:
+      operationId: approveProposal
+      tags: [Proposals]
+      summary: Approve the exact pending proposal (asynchronous execution)
+      description: |
+        Approver role required; the approver must not be the case creator (`403`
+        `forbidden_separation_of_duties`). The request is bound to the proposal `digest` and
+        `policyVersion` the approver saw. The decision, case transition and execution outbox item
+        commit atomically; the credit is issued afterwards by deterministic code and revalidated
+        before execution.
+
+        A refusal is `409` with one of these codes: `proposal_not_decidable` (a finding, which
+        proposes no credit), `proposal_already_decided`, `proposal_superseded`, `approval_expired`,
+        `proposal_digest_mismatch`, `policy_version_mismatch`, `policy_version_changed` (the policy
+        version in effect is no longer the one the proposal cites; approvals only) or
+        `concurrent_update` (read the case and retry). Repeating an identical decision by the same
+        approver replays the stored decision.
+      x-resolve-roles: [Approver]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRequest' }
+            examples:
+              approve:
+                value: { policyVersion: 2, proposalDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000', comment: Matches both invoices. }
+      responses:
+        '202':
+          description: Approved. Execution is queued.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+            Location:
+              description: URL of the case.
+              schema: { type: string }
+            Retry-After:
+              description: Suggested polling interval in seconds.
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DecisionAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+  /cases/{caseId}/proposals/{version}/reject:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+      - $ref: '#/components/parameters/ProposalVersion'
+    post:
+      operationId: rejectProposal
+      tags: [Proposals]
+      summary: Reject the exact pending proposal with a recorded reason
+      description: |
+        Approver role required; the approver must not be the case creator (`403`
+        `forbidden_separation_of_duties`). The reason is recorded with the decision and kept as
+        untrusted text. A rejection issues nothing, so it does not need the cited policy version to
+        still be in effect.
+
+        A refusal is `409` with one of these codes: `proposal_not_decidable`,
+        `proposal_already_decided`, `proposal_superseded`, `approval_expired`,
+        `proposal_digest_mismatch`, `policy_version_mismatch` or `concurrent_update` (read the case
+        and retry). Repeating an identical rejection by the same approver replays the stored
+        decision.
+      x-resolve-roles: [Approver]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRequest' }
+      responses:
+        '200':
+          description: Rejected. The reason is recorded; a revision needs fresh approval.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Decision' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+  /cases/{caseId}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    post:
+      operationId: requestRevision
+      tags: [Proposals]
+      summary: Start a new investigation after a rejection, expiry or stale version
+      description: |
+        Creates run `N+1`; its proposal becomes version `N+1` and needs fresh approval. The reason
+        is stored and shown to the agent only as untrusted data. At most 3 revisions per case.
+        Allowed when the case is `rejected`, `expired` or `finding_reported`; any other status
+        returns 409 `revision_not_allowed`, and a request past the limit returns 409
+        `revision_limit_reached`. `concurrent_update` (409) means another change won; read the case
+        and retry. A revision request is not idempotent: repeating one that succeeded is refused,
+        because the case is no longer revisable.
+      x-resolve-roles: [Representative, Approver]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionRequest' }
+      responses:
+        '202':
+          description: Accepted. The revision run is queued.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+            Location:
+              description: URL of the new run.
+              schema: { type: string }
+            Retry-After:
+              description: Suggested polling interval in seconds.
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /cases/{caseId}/credit:
+    parameters:
+      - $ref: '#/components/parameters/CaseId'
+    get:
+      operationId: getCreditResult
+      tags: [Credits]
+      summary: The recorded result of the simulated credit
+      description: |
+        `404` until a credit has been recorded: the case may still await a decision, have been
+        rejected, or have an approved credit that is not executed yet.
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The credit result.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreditResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /accounts/{accountId}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: getAccount
+      tags: [Evidence]
+      summary: A fictional account with its subscriptions
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The account.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /accounts/{accountId}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      operationId: listInvoices
+      tags: [Evidence]
+      summary: Invoices of an account, newest first
+      x-resolve-roles: [Representative, Approver, Operator]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ContinuationToken'
+      responses:
+        '200':
+          description: One page of invoices.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoicePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /invoices/{invoiceId}:
+    parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+    get:
+      operationId: getInvoice
+      tags: [Evidence]
+      summary: One invoice with lines and payments
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The invoice.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /policies:
+    get:
+      operationId: listPolicies
+      tags: [Evidence]
+      summary: Credit policy versions of the tenant, newest first
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: All policy versions of the tenant.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /policies/{policyId}/versions/{policyVersion}:
+    parameters:
+      - $ref: '#/components/parameters/PolicyId'
+      - $ref: '#/components/parameters/PolicyVersion'
+    get:
+      operationId: getPolicy
+      tags: [Evidence]
+      summary: One immutable policy version with its clauses
+      x-resolve-roles: [Representative, Approver, Operator]
+      responses:
+        '200':
+          description: The policy version.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Policy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /operator/work:
+    get:
+      operationId: listOperatorWork
+      tags: [Operator]
+      summary: Work items by state (operator only)
+      description: |
+        Lists the work of the operator's own tenant in one state, newest first, one page at a time.
+        `waiting` is a proposal that awaits a decision and has not expired; `failed` is a run that
+        failed or was blocked, and has no recovery action; `budget_exhausted` is a run that stopped
+        at its allowance; `poison` and `completed` are outbox items; `recoverable` is an outbox item
+        whose claim lapsed, or that has stayed pending for more than five minutes after it was due.
+      x-resolve-roles: [Operator]
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/WorkState' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/ContinuationToken'
+      responses:
+        '200':
+          description: One page of work items of the operator's tenant.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkItemPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /operator/work/{workId}:
+    parameters:
+      - $ref: '#/components/parameters/WorkId'
+    get:
+      operationId: getOperatorWorkItem
+      tags: [Operator]
+      summary: Inspect one work item (operator only)
+      description: |
+        `404` when the item does not exist, belongs to another tenant, or is in no operator state:
+        a proposal that is not waiting for a decision, a run that is queued, running or completed,
+        and an outbox item that is claimed within its lease or pending and not overdue cannot be
+        inspected. A completed outbox item can.
+      x-resolve-roles: [Operator]
+      responses:
+        '200':
+          description: The work item.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /operator/work/{workId}/recover:
+    parameters:
+      - $ref: '#/components/parameters/WorkId'
+    post:
+      operationId: recoverWorkItem
+      tags: [Operator]
+      summary: Requeue poison/recoverable work or resume a budget-exhausted run
+      description: |
+        `requeue` re-arms a poison or recoverable outbox item; execution still revalidates the
+        proposal and reconciles the provider, so a completed credit is never repeated. `resume`
+        continues a budget-exhausted run from its persisted state with an explicit, recorded
+        allowance (at most 2 grants per run, each no larger than the base limits); usage history is
+        preserved and never reset. Recovery cannot approve, reject or create credits.
+
+        A resume queues the run again, so it needs one of the tenant's concurrent-run slots; when
+        none is free the answer is 429 `tenant_concurrency_limit` and nothing is recorded.
+
+        `allowance` is required for `resume` and not allowed for `requeue`; otherwise the answer is
+        a `400` with the field error `allowance_required` or `allowance_not_applicable` at
+        `/allowance`. A refusal that depends on the item is `409`: `recovery_not_applicable` (the
+        item is not in a state this action recovers), `resume_grants_exhausted`,
+        `allowance_does_not_cover_stop` (the allowance does not raise the limit the run stopped at)
+        or `concurrent_update` (read the item and retry). Recovery acts on the state the item is in
+        now, so a repeated request is refused with `recovery_not_applicable` once the first one
+        has taken effect.
+      x-resolve-roles: [Operator]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecoverRequest' }
+            examples:
+              resume:
+                value: { action: resume, reason: Investigation hit the tool-call limit on a long invoice history., allowance: { toolCalls: 4, steps: 2 } }
+      responses:
+        '202':
+          description: Recovery accepted and recorded.
+          headers:
+            X-Correlation-Id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoverAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+components:
+  securitySchemes:
+    entra:
+      type: oauth2
+      description: Microsoft Entra ID access token (v2) with the `access_as_user` scope.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/organizations/oauth2/v2.0/token
+          scopes:
+            access_as_user: Call Resolve as the signed-in user
+  headers:
+    CorrelationId:
+      description: Correlation id of the request; also present in diagnostics.
+      schema: { type: string, maxLength: 64 }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 16-64 characters of `A-Za-z0-9._~-`. Scoped to (tenant, caller, key).
+      schema: { type: string, pattern: '^[A-Za-z0-9._~-]{16,64}$' }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    ContinuationToken:
+      name: continuationToken
+      in: query
+      required: false
+      description: Opaque cursor returned by the previous page.
+      schema: { type: string, minLength: 1, maxLength: 512, pattern: '^[A-Za-z0-9_-]+$' }
+    CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/CaseId' }
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/RunId' }
+    ProposalVersion:
+      name: version
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1, maximum: 4 }
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    InvoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    PolicyVersion:
+      name: policyVersion
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1, maximum: 999 }
+    WorkId:
+      name: workId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/WorkId' }
+  responses:
+    BadRequest:
+      description: The request is malformed or fails validation.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            validation:
+              value:
+                type: about:blank
+                title: Request validation failed
+                status: 400
+                code: validation_failed
+                correlationId: 5f7a2c1e9d3b4a60
+                errors: [{ pointer: /description, code: too_long, message: must NOT have more than 4000 characters }]
+    Unauthorized:
+      description: The bearer token is missing or invalid.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+        WWW-Authenticate:
+          schema: { type: string }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            missing:
+              value: { type: about:blank, title: Authentication required, status: 401, code: unauthenticated, correlationId: 5f7a2c1e9d3b4a60 }
+    Forbidden:
+      description: The caller lacks the required tenant role.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            wrongRole:
+              value: { type: about:blank, title: Forbidden, status: 403, code: forbidden_role, correlationId: 5f7a2c1e9d3b4a60 }
+    NotFound:
+      description: The resource does not exist or belongs to another tenant.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            missing:
+              value: { type: about:blank, title: Not found, status: 404, code: not_found, correlationId: 5f7a2c1e9d3b4a60 }
+    Conflict:
+      description: The request conflicts with the current state or a previous request.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            idempotencyKeyReused:
+              value: { type: about:blank, title: Idempotency key reused with different input, status: 409, code: idempotency_key_reused, correlationId: 5f7a2c1e9d3b4a60 }
+            staleProposal:
+              value: { type: about:blank, title: The proposal changed since it was shown, status: 409, code: proposal_digest_mismatch, correlationId: 5f7a2c1e9d3b4a60 }
+    LengthRequired:
+      description: >-
+        A request with a body must declare its size in a `Content-Length` header. Chunked transfer
+        encoding is not supported: the Azure Functions host does not pass such bodies to the app.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            missingLength:
+              value: { type: about:blank, title: A Content-Length header is required, status: 411, code: length_required, correlationId: 5f7a2c1e9d3b4a60 }
+    PayloadTooLarge:
+      description: The request body exceeds 16 KiB.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedMediaType:
+      description: Only `application/json` is accepted.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    TooManyRequests:
+      description: A tenant admission or concurrency limit was reached.
+      headers:
+        X-Correlation-Id:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            daily:
+              value: { type: about:blank, title: Daily case limit reached, status: 429, code: tenant_daily_case_limit, correlationId: 5f7a2c1e9d3b4a60, retryAfterSeconds: 3600 }
+  schemas:
+    Id:
+      type: string
+      description: Lowercase identifier without `/ \ ? #`.
+      pattern: '^[a-z][a-z0-9_-]{2,63}$'
+    CaseId:
+      type: string
+      description: Deterministic case id derived from the idempotency scope.
+      pattern: '^case_[0-9a-f]{32}$'
+    RunId:
+      type: string
+      description: '`run-<revision>`, unique within a case.'
+      pattern: '^run-[1-4]$'
+    WorkId:
+      type: string
+      description: '`<caseId>~<document id>`.'
+      pattern: '^case_[0-9a-f]{32}~[a-z0-9_-]{1,80}$'
+    Timestamp:
+      type: string
+      format: date-time
+    Money:
+      type: object
+      additionalProperties: false
+      required: [amountMinor, currency]
+      properties:
+        amountMinor:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+          description: Amount in minor units (cents).
+        currency: { type: string, enum: [USD, EUR] }
+      examples:
+        - { amountMinor: 4900, currency: USD }
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+    Role:
+      type: string
+      enum: [Representative, Approver, Operator]
+    Session:
+      type: object
+      additionalProperties: false
+      required: [principal, environment]
+      properties:
+        principal:
+          type: object
+          additionalProperties: false
+          required: [principalId, tenantId, roles]
+          properties:
+            principalId: { type: string, maxLength: 64, description: Entra object id of the caller. }
+            tenantId: { $ref: '#/components/schemas/Id' }
+            roles:
+              type: array
+              minItems: 1
+              maxItems: 3
+              uniqueItems: true
+              items: { $ref: '#/components/schemas/Role' }
+        environment:
+          type: object
+          additionalProperties: false
+          required: [agentMode, liveAvailable, liveBlockedReason, simulatedCredits, apiVersion]
+          properties:
+            agentMode:
+              type: string
+              enum: [demo, live]
+              description: '`demo` is the deterministic investigator; `live` calls a real model. Live never falls back to demo.'
+            liveAvailable: { type: boolean }
+            liveBlockedReason: { type: [string, 'null'], maxLength: 80 }
+            simulatedCredits: { type: boolean, const: true }
+            apiVersion: { type: string }
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, correlationId]
+      properties:
+        type: { type: string, maxLength: 200 }
+        title: { type: string, maxLength: 200 }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string, maxLength: 1000 }
+        code: { type: string, pattern: '^[a-z][a-z0-9_]{2,60}$' }
+        correlationId: { type: string, maxLength: 64 }
+        retryAfterSeconds: { type: integer, minimum: 0 }
+        errors:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/FieldError' }
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [pointer, code, message]
+      properties:
+        pointer: { type: string, maxLength: 200 }
+        code: { type: string, maxLength: 60 }
+        message: { type: string, maxLength: 300 }
+    CaseCategory:
+      type: string
+      enum: [duplicate_charge, incorrect_amount, service_outage, other]
+    CaseStatus:
+      type: string
+      description: |
+        `queued` and `investigating` are active; `awaiting_approval` holds no compute;
+        `finding_reported` means evidence was missing or contradictory and no credit was proposed;
+        `approved` means execution is queued; `needs_attention` means failed, poison or
+        budget-exhausted work that an operator must recover. `expired` is reported when the
+        pending proposal passed its approval expiry.
+      enum: [queued, investigating, awaiting_approval, finding_reported, approved, credited, rejected, expired, needs_attention]
+    CreateCaseRequest:
+      type: object
+      additionalProperties: false
+      required: [accountId, category, description]
+      properties:
+        accountId: { $ref: '#/components/schemas/Id' }
+        invoiceIds:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/Id' }
+        category: { $ref: '#/components/schemas/CaseCategory' }
+        requestedCredit: { $ref: '#/components/schemas/Money' }
+        description:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: Untrusted free text. It is never executed or followed as an instruction.
+    Actor:
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [user, agent, system] }
+        id: { type: string, maxLength: 64 }
+    ProposalBrief:
+      type: object
+      additionalProperties: false
+      required: [version, kind, status, amount, approvalExpiresAt]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 4 }
+        kind: { $ref: '#/components/schemas/ProposalKind' }
+        status: { $ref: '#/components/schemas/ProposalStatus' }
+        amount:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        approvalExpiresAt:
+          oneOf:
+            - { $ref: '#/components/schemas/Timestamp' }
+            - { type: 'null' }
+    CaseSummary:
+      type: object
+      additionalProperties: false
+      required: [caseId, tenantId, status, category, accountId, createdAt, updatedAt, createdBy, revision, latestProposal]
+      properties:
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        tenantId: { $ref: '#/components/schemas/Id' }
+        status: { $ref: '#/components/schemas/CaseStatus' }
+        category: { $ref: '#/components/schemas/CaseCategory' }
+        accountId: { $ref: '#/components/schemas/Id' }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+        createdBy: { $ref: '#/components/schemas/Actor' }
+        revision: { type: integer, minimum: 1, maximum: 4, description: Number of runs so far. }
+        latestProposal:
+          oneOf:
+            - { $ref: '#/components/schemas/ProposalBrief' }
+            - { type: 'null' }
+    CaseDetail:
+      type: object
+      additionalProperties: false
+      required: [caseId, tenantId, status, category, accountId, createdAt, updatedAt, createdBy, revision, latestProposal, description, invoiceIds, requestedCredit, latestRun, creditResult]
+      properties:
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        tenantId: { $ref: '#/components/schemas/Id' }
+        status: { $ref: '#/components/schemas/CaseStatus' }
+        category: { $ref: '#/components/schemas/CaseCategory' }
+        accountId: { $ref: '#/components/schemas/Id' }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+        createdBy: { $ref: '#/components/schemas/Actor' }
+        revision: { type: integer, minimum: 1, maximum: 4, description: Number of runs so far. }
+        latestProposal:
+          oneOf:
+            - { $ref: '#/components/schemas/ProposalBrief' }
+            - { type: 'null' }
+        description: { type: string, maxLength: 4000 }
+        invoiceIds:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/Id' }
+        requestedCredit:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        latestRun:
+          oneOf:
+            - { $ref: '#/components/schemas/Run' }
+            - { type: 'null' }
+        creditResult:
+          oneOf:
+            - { $ref: '#/components/schemas/CreditResult' }
+            - { type: 'null' }
+    CaseAccepted:
+      type: object
+      additionalProperties: false
+      required: [case, runId, replayed]
+      properties:
+        case: { $ref: '#/components/schemas/CaseSummary' }
+        runId: { $ref: '#/components/schemas/RunId' }
+        replayed: { type: boolean, description: True when this is a replay of an earlier identical request. }
+    CasePage:
+      type: object
+      additionalProperties: false
+      required: [items, continuationToken]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/CaseSummary' }
+        continuationToken: { type: [string, 'null'], maxLength: 512 }
+    RunState:
+      type: string
+      enum: [queued, running, completed, failed, budget_exhausted, blocked]
+    UsageQuality:
+      type: string
+      description: '`unknown` is not zero. `not_applicable` is used by the deterministic demo investigator.'
+      enum: [measured, estimated, unknown, not_applicable]
+    UsageSummary:
+      type: object
+      additionalProperties: false
+      required: [steps, toolCalls, modelCalls, retries, failedCalls, ambiguousCalls, inputTokens, outputTokens, tokenQuality, costMicroUsd, costQuality, activeMs]
+      properties:
+        steps: { type: integer, minimum: 0 }
+        toolCalls: { type: integer, minimum: 0 }
+        modelCalls: { type: integer, minimum: 0 }
+        retries: { type: integer, minimum: 0 }
+        failedCalls: { type: integer, minimum: 0 }
+        ambiguousCalls: { type: integer, minimum: 0 }
+        inputTokens: { type: [integer, 'null'], minimum: 0 }
+        outputTokens: { type: [integer, 'null'], minimum: 0 }
+        tokenQuality: { $ref: '#/components/schemas/UsageQuality' }
+        costMicroUsd: { type: [integer, 'null'], minimum: 0 }
+        costQuality: { $ref: '#/components/schemas/UsageQuality' }
+        activeMs: { type: integer, minimum: 0 }
+    RunLimits:
+      type: object
+      additionalProperties: false
+      required: [steps, toolCalls, modelCalls, tokens, costMicroUsd, retriesPerCall, retriesPerRun, activeMs]
+      properties:
+        steps: { type: integer, minimum: 0 }
+        toolCalls: { type: integer, minimum: 0 }
+        modelCalls: { type: integer, minimum: 0 }
+        tokens: { type: integer, minimum: 0 }
+        costMicroUsd: { type: integer, minimum: 0 }
+        retriesPerCall: { type: integer, minimum: 0 }
+        retriesPerRun: { type: integer, minimum: 0 }
+        activeMs: { type: integer, minimum: 0 }
+    Run:
+      type: object
+      additionalProperties: false
+      required: [runId, caseId, revision, mode, state, stopReason, createdAt, startedAt, finishedAt, usage, limits, allowanceGrants]
+      properties:
+        runId: { $ref: '#/components/schemas/RunId' }
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        revision: { type: integer, minimum: 1, maximum: 4 }
+        mode: { type: string, enum: [demo, live] }
+        state: { $ref: '#/components/schemas/RunState' }
+        stopReason:
+          type: [string, 'null']
+          maxLength: 80
+          description: |
+            Open set. A stable code that says why the run did not complete; null while it has not stopped.
+            Known values: active_time_exhausted, steps_exhausted, tool_calls_exhausted, model_calls_exhausted,
+            tokens_exhausted, cost_exhausted, tenant_cost_exhausted, retries_per_call_exhausted,
+            retries_exhausted, tool_error, account_unavailable, policy_unavailable, no_proposal_submitted,
+            live_not_approved, live_not_configured, model_auth_failed, model_unauthorized, model_bad_request,
+            model_rate_limited, model_unavailable, model_timeout, model_connection_failed,
+            model_response_invalid, model_client_error, model_invalid_tool_calls, model_turn_limit,
+            model_refused, model_content_filtered, model_output_truncated, model_after_submission.
+            Clients must tolerate unknown values.
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+        usage: { $ref: '#/components/schemas/UsageSummary' }
+        limits: { $ref: '#/components/schemas/RunLimits' }
+        allowanceGrants: { type: integer, minimum: 0, maximum: 2 }
+    RunList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/Run' }
+    UsageEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, runId, seq, kind, name, outcome, attempt, at, inputTokens, outputTokens, tokenQuality, costMicroUsd, costQuality, latencyMs, errorCode]
+      properties:
+        eventId: { type: string, maxLength: 100 }
+        runId: { $ref: '#/components/schemas/RunId' }
+        seq: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [tool, model] }
+        name: { type: string, maxLength: 80 }
+        outcome: { type: string, enum: [reserved, succeeded, failed, ambiguous, rejected_by_code], description: 'reserved while the call is in flight; the event is then updated in place with the call outcome.' }
+        attempt: { type: integer, minimum: 1 }
+        at: { $ref: '#/components/schemas/Timestamp' }
+        inputTokens: { type: [integer, 'null'], minimum: 0 }
+        outputTokens: { type: [integer, 'null'], minimum: 0 }
+        tokenQuality: { $ref: '#/components/schemas/UsageQuality' }
+        costMicroUsd: { type: [integer, 'null'], minimum: 0 }
+        costQuality: { $ref: '#/components/schemas/UsageQuality' }
+        latencyMs: { type: [integer, 'null'], minimum: 0 }
+        errorCode: { type: [string, 'null'], maxLength: 80 }
+    UsageEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, continuationToken]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/UsageEvent' }
+        continuationToken: { type: [string, 'null'], maxLength: 512 }
+    TimelineItem:
+      type: object
+      additionalProperties: false
+      required: [seq, at, kind, actor, summary]
+      properties:
+        seq: { type: integer, minimum: 1 }
+        at: { $ref: '#/components/schemas/Timestamp' }
+        kind:
+          type: string
+          pattern: '^[a-z][a-z_]{2,40}$'
+          description: |
+            Open set. Known values: case_created, run_queued, run_started, tool_called, model_called,
+            proposal_submitted, finding_recorded, proposal_rejected_by_code, decision_approved,
+            decision_rejected, revision_requested, execution_queued, credit_executed,
+            credit_reconciled, run_failed, run_blocked, run_restarted, run_budget_exhausted, run_resumed,
+            work_poisoned, work_requeued, approval_expired. Clients must tolerate unknown values.
+        actor: { $ref: '#/components/schemas/Actor' }
+        summary: { type: string, maxLength: 300 }
+        data:
+          type: object
+          description: |
+            Small, kind-specific details without secrets. A reason typed by a person (a rejection,
+            a revision or a recovery) is included as entered and is untrusted text.
+          additionalProperties:
+            type: [string, number, boolean, 'null']
+          maxProperties: 12
+    TimelinePage:
+      type: object
+      additionalProperties: false
+      required: [items, continuationToken]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/TimelineItem' }
+        continuationToken: { type: [string, 'null'], maxLength: 512 }
+    Subscription:
+      type: object
+      additionalProperties: false
+      required: [subscriptionId, plan, status, monthlyAmount]
+      properties:
+        subscriptionId: { $ref: '#/components/schemas/Id' }
+        plan: { type: string, maxLength: 60 }
+        status: { type: string, enum: [active, cancelled, paused] }
+        monthlyAmount: { $ref: '#/components/schemas/Money' }
+    Account:
+      type: object
+      additionalProperties: false
+      required: [accountId, displayName, currency, status, subscriptions]
+      properties:
+        accountId: { $ref: '#/components/schemas/Id' }
+        displayName: { type: string, maxLength: 100, description: Fictional company name. }
+        currency: { type: string, enum: [USD, EUR] }
+        status: { type: string, enum: [active, suspended, closed] }
+        subscriptions:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/Subscription' }
+    InvoiceLine:
+      type: object
+      additionalProperties: false
+      required: [description, amount]
+      properties:
+        description: { type: string, maxLength: 200 }
+        amount: { $ref: '#/components/schemas/Money' }
+    Payment:
+      type: object
+      additionalProperties: false
+      required: [paymentId, amount, status]
+      properties:
+        paymentId: { $ref: '#/components/schemas/Id' }
+        amount: { $ref: '#/components/schemas/Money' }
+        status: { type: string, enum: [succeeded, refunded, failed] }
+    Invoice:
+      type: object
+      additionalProperties: false
+      required: [invoiceId, accountId, subscriptionId, number, periodStart, periodEnd, issuedAt, status, lines, total, payments]
+      properties:
+        invoiceId: { $ref: '#/components/schemas/Id' }
+        accountId: { $ref: '#/components/schemas/Id' }
+        subscriptionId: { $ref: '#/components/schemas/Id' }
+        number: { type: string, maxLength: 40 }
+        periodStart: { type: string, format: date }
+        periodEnd: { type: string, format: date }
+        issuedAt: { $ref: '#/components/schemas/Timestamp' }
+        status: { type: string, enum: [paid, open, void, refunded] }
+        lines:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/InvoiceLine' }
+        total: { $ref: '#/components/schemas/Money' }
+        payments:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/Payment' }
+    InvoicePage:
+      type: object
+      additionalProperties: false
+      required: [items, continuationToken]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Invoice' }
+        continuationToken: { type: [string, 'null'], maxLength: 512 }
+    PolicyClause:
+      type: object
+      additionalProperties: false
+      required: [clauseId, title, text, appliesTo, maxCreditMinor]
+      properties:
+        clauseId: { $ref: '#/components/schemas/Id' }
+        title: { type: string, maxLength: 100 }
+        text: { type: string, maxLength: 1000 }
+        appliesTo: { $ref: '#/components/schemas/CaseCategory' }
+        maxCreditMinor:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+          description: Hard cap enforced in code for credits proposed under this clause.
+        creditRateBasisPoints:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: |
+            Share of the evidenced amount that is creditable under this clause, in basis points
+            (1000 is ten percent). When absent, the whole evidenced amount is creditable. Code
+            enforces it together with `maxCreditMinor`; `text` is the human-readable form of the rule.
+    Policy:
+      type: object
+      additionalProperties: false
+      required: [policyId, version, status, effectiveFrom, currency, clauses]
+      properties:
+        policyId: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1, maximum: 999 }
+        status: { type: string, enum: [effective, superseded] }
+        effectiveFrom: { $ref: '#/components/schemas/Timestamp' }
+        currency: { type: string, enum: [USD, EUR] }
+        clauses:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/PolicyClause' }
+    PolicyList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Policy' }
+    ProposalKind:
+      type: string
+      enum: [credit, finding]
+    ProposalStatus:
+      type: string
+      description: |
+        `pending_approval` is a credit proposal waiting for an approver. `reported` is a finding:
+        it records why no credit is proposed, needs no decision and has no approval expiry.
+        `expired` is reported once `approvalExpiresAt` has passed without a decision.
+        `superseded` means a later revision replaced it.
+      enum: [pending_approval, reported, approved, rejected, expired, executed, superseded]
+    EvidenceAssessment:
+      type: string
+      enum: [consistent, missing, contradictory]
+    InvoiceRef:
+      type: object
+      additionalProperties: false
+      required: [invoiceId, lineIndex]
+      properties:
+        invoiceId: { $ref: '#/components/schemas/Id' }
+        lineIndex: { type: [integer, 'null'], minimum: 0, maximum: 9 }
+    PolicyRef:
+      type: object
+      additionalProperties: false
+      required: [policyId, version, clauseId]
+      properties:
+        policyId: { $ref: '#/components/schemas/Id' }
+        version: { type: integer, minimum: 1, maximum: 999 }
+        clauseId: { $ref: '#/components/schemas/Id' }
+    FindingCode:
+      type: string
+      enum: [missing_evidence, contradictory_evidence, no_credit_due, exceeds_policy_limit]
+    Proposal:
+      type: object
+      additionalProperties: false
+      required: [caseId, version, runId, kind, status, amount, explanation, invoiceRefs, policyRef, findingCode, evidenceAssessment, digest, createdAt, approvalExpiresAt, decision]
+      properties:
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        version: { type: integer, minimum: 1, maximum: 4 }
+        runId: { $ref: '#/components/schemas/RunId' }
+        kind: { $ref: '#/components/schemas/ProposalKind' }
+        status: { $ref: '#/components/schemas/ProposalStatus' }
+        amount:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        explanation: { type: string, maxLength: 2000 }
+        invoiceRefs:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/InvoiceRef' }
+        policyRef:
+          oneOf:
+            - { $ref: '#/components/schemas/PolicyRef' }
+            - { type: 'null' }
+        findingCode:
+          oneOf:
+            - { $ref: '#/components/schemas/FindingCode' }
+            - { type: 'null' }
+        evidenceAssessment: { $ref: '#/components/schemas/EvidenceAssessment' }
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: SHA-256 over the canonical proposal content. Approvals are bound to it.
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        approvalExpiresAt: { type: [string, 'null'], format: date-time }
+        decision:
+          oneOf:
+            - { $ref: '#/components/schemas/Decision' }
+            - { type: 'null' }
+    ProposalList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/Proposal' }
+    ApproveRequest:
+      type: object
+      additionalProperties: false
+      required: [policyVersion, proposalDigest]
+      properties:
+        policyVersion: { type: integer, minimum: 1, maximum: 999 }
+        proposalDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        comment: { type: string, maxLength: 500 }
+    RejectRequest:
+      type: object
+      additionalProperties: false
+      required: [policyVersion, proposalDigest, reason]
+      properties:
+        policyVersion: { type: integer, minimum: 1, maximum: 999 }
+        proposalDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [decisionId, caseId, proposalVersion, policyVersion, proposalDigest, outcome, reason, decidedBy, decidedAt]
+      properties:
+        decisionId: { type: string, maxLength: 100 }
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        proposalVersion: { type: integer, minimum: 1, maximum: 4 }
+        policyVersion: { type: integer, minimum: 1, maximum: 999 }
+        proposalDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        outcome: { type: string, enum: [approved, rejected] }
+        reason: { type: [string, 'null'], maxLength: 500 }
+        decidedBy: { $ref: '#/components/schemas/Actor' }
+        decidedAt: { $ref: '#/components/schemas/Timestamp' }
+    DecisionAccepted:
+      type: object
+      additionalProperties: false
+      required: [decision, caseStatus]
+      properties:
+        decision: { $ref: '#/components/schemas/Decision' }
+        caseStatus: { $ref: '#/components/schemas/CaseStatus' }
+    RevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Untrusted free text, stored on the run and in the case timeline for reviewers. The investigating agent is not given it.
+    CreditResult:
+      type: object
+      additionalProperties: false
+      required: [resultId, caseId, proposalVersion, amount, simulated, provider, recordedAt]
+      properties:
+        resultId: { type: string, maxLength: 100 }
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        proposalVersion: { type: integer, minimum: 1, maximum: 4 }
+        amount: { $ref: '#/components/schemas/Money' }
+        simulated: { type: boolean, const: true }
+        provider:
+          type: object
+          additionalProperties: false
+          required: [name, reference, idempotencyKey, reconciled]
+          properties:
+            name: { type: string, maxLength: 60 }
+            reference: { type: string, maxLength: 100 }
+            idempotencyKey: { type: string, maxLength: 100 }
+            reconciled:
+              type: boolean
+              description: True when the provider already held the credit and the executor only acknowledged it locally.
+        recordedAt: { $ref: '#/components/schemas/Timestamp' }
+    WorkState:
+      type: string
+      description: |
+        `waiting` proposals awaiting a human; `failed` runs; `poison` outbox items that exhausted their
+        attempts; `recoverable` outbox items whose claim lease expired or that never started;
+        `budget_exhausted` runs stopped by a limit; `completed` finished outbox items.
+      enum: [waiting, failed, poison, recoverable, budget_exhausted, completed]
+    WorkKind:
+      type: string
+      enum: [proposal_approval, investigation_run, outbox]
+    WorkItem:
+      type: object
+      description: |
+        `attempts` counts executions. For an outbox item it is the attempts made so far; for a run
+        it is 0 until the run starts and then one more than the resume grants it has used; for a
+        proposal it is 0.
+      additionalProperties: false
+      required: [workId, caseId, kind, state, summary, createdAt, updatedAt, attempts, lastError, claimedUntil, usage, actions]
+      properties:
+        workId: { $ref: '#/components/schemas/WorkId' }
+        caseId: { $ref: '#/components/schemas/CaseId' }
+        kind: { $ref: '#/components/schemas/WorkKind' }
+        state: { $ref: '#/components/schemas/WorkState' }
+        summary: { type: string, maxLength: 200 }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+        attempts: { type: integer, minimum: 0 }
+        lastError:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code: { type: string, maxLength: 80 }
+                message: { type: string, maxLength: 300 }
+            - { type: 'null' }
+        claimedUntil: { type: [string, 'null'], format: date-time }
+        usage:
+          oneOf:
+            - { $ref: '#/components/schemas/UsageSummary' }
+            - { type: 'null' }
+        actions:
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [requeue, resume] }
+    WorkItemPage:
+      type: object
+      additionalProperties: false
+      required: [items, continuationToken]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/WorkItem' }
+        continuationToken: { type: [string, 'null'], maxLength: 512 }
+    Allowance:
+      type: object
+      description: Additional allowance granted by an operator; each value is capped by the base limit.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        steps: { type: integer, minimum: 1, maximum: 8 }
+        toolCalls: { type: integer, minimum: 1, maximum: 12 }
+        modelCalls: { type: integer, minimum: 1, maximum: 8 }
+        tokens: { type: integer, minimum: 1, maximum: 30000 }
+        costMicroUsd: { type: integer, minimum: 1, maximum: 250000 }
+        activeMs: { type: integer, minimum: 1000, maximum: 90000 }
+    RecoverRequest:
+      type: object
+      additionalProperties: false
+      required: [action, reason]
+      properties:
+        action: { type: string, enum: [requeue, resume] }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+        allowance: { $ref: '#/components/schemas/Allowance' }
+    RecoverAccepted:
+      type: object
+      description: |
+        `state` is the state the item was in when the recovery was accepted, not the state it moves
+        to. `grantNumber` is the resume grant that was spent, and null for a requeue.
+      additionalProperties: false
+      required: [workId, action, state, grantNumber]
+      properties:
+        workId: { $ref: '#/components/schemas/WorkId' }
+        action: { type: string, enum: [requeue, resume] }
+        state: { $ref: '#/components/schemas/WorkState' }
+        grantNumber: { type: [integer, 'null'], minimum: 1, maximum: 2 }

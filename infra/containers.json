@@ -1,0 +1,63 @@
+{
+  "$comment": "Single source of container definitions: Bicep loads it with loadJsonContent and the local provisioner reads it. No throughput is declared anywhere; the account is serverless. Partition keys, indexing and TTL are justified in README.md.",
+  "database": "resolve",
+  "containers": [
+    {
+      "name": "reference",
+      "purpose": "Fictional accounts, invoices and credit-policy versions. Read-heavy, written only by the guarded seeder.",
+      "partitionKey": { "paths": ["/tenantId"], "kind": "Hash", "version": 2 },
+      "defaultTtl": null,
+      "indexingPolicy": {
+        "indexingMode": "consistent",
+        "automatic": true,
+        "includedPaths": [{ "path": "/*" }],
+        "excludedPaths": [{ "path": "/\"_etag\"/?" }]
+      }
+    },
+    {
+      "name": "cases",
+      "purpose": "Case aggregate: cases, idempotency records, runs, usage events, proposals, decisions, timeline, credit results and outbox work.",
+      "partitionKey": { "paths": ["/tenantId", "/caseId"], "kind": "MultiHash", "version": 2 },
+      "defaultTtl": -1,
+      "indexingPolicy": {
+        "indexingMode": "consistent",
+        "automatic": true,
+        "includedPaths": [{ "path": "/*" }],
+        "excludedPaths": [
+          { "path": "/\"_etag\"/?" },
+          { "path": "/description/?" },
+          { "path": "/revisionReason/?" },
+          { "path": "/explanation/?" },
+          { "path": "/decision/reason/?" },
+          { "path": "/summary/?" },
+          { "path": "/data/*" },
+          { "path": "/snapshot/*" }
+        ]
+      }
+    },
+    {
+      "name": "provider",
+      "purpose": "Ledger of the simulated credit provider. Separate from cases because the provider is an external system and no transaction may span it.",
+      "partitionKey": { "paths": ["/tenantId"], "kind": "Hash", "version": 2 },
+      "defaultTtl": null,
+      "indexingPolicy": {
+        "indexingMode": "consistent",
+        "automatic": true,
+        "includedPaths": [{ "path": "/*" }],
+        "excludedPaths": [{ "path": "/\"_etag\"/?" }]
+      }
+    },
+    {
+      "name": "leases",
+      "purpose": "Change feed processor leases for the Cosmos DB trigger. Never created at runtime.",
+      "partitionKey": { "paths": ["/id"], "kind": "Hash", "version": 2 },
+      "defaultTtl": null,
+      "indexingPolicy": {
+        "indexingMode": "consistent",
+        "automatic": true,
+        "includedPaths": [{ "path": "/*" }],
+        "excludedPaths": [{ "path": "/\"_etag\"/?" }]
+      }
+    }
+  ]
+}
