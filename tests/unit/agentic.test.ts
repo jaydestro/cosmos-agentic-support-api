@@ -22,7 +22,7 @@ for (const name of ['contract-cosmos-review', 'docs-maintainer']) {
     assert.match(String(config['if']), /RESOLVE_REPOSITORY_AUTOMATION_APPROVED/);
     assert.equal(config['timeout-minutes'], 10);
     assert.equal(config['max-turns'], 8);
-    assert.equal(config['max-ai-credits'], 2);
+    assert.equal(config['max-ai-credits'], 15);
     assert.equal(record(record(config['engine'])['harness'])['max-retries'], 0);
     const safe = record(config['safe-outputs']);
     assert.equal(safe['timeout-minutes'], 5);

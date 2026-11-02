@@ -80,3 +80,7 @@ because no live model was configured; coding-agent (this session's Copilot) usag
 Create a fine-grained PAT (resource owner: the user, **Copilot Requests: Read**), store it with
 `gh aw secrets set COPILOT_GITHUB_TOKEN`, rerun both workflows, and record the reviewer comment or draft PR and whether it was
 accepted or rejected. This was not done here because the PAT cannot be created from the CLI.
+
+## Correction (2026-11-02): the failures were the credit guardrail, not authentication
+
+The harness labelled the failed agent runs `authentication_failed` and the sections above repeat that label. The issues the workflows filed themselves ([#2](https://github.com/jaydestro/cosmos-agentic-support-api/issues/2), [#4](https://github.com/jaydestro/cosmos-agentic-support-api/issues/4)) show the real cause: **AI Credits Budget Exceeded**, used 11.3 of a configured 2 (and 10.1 of 2). Inference did work (the single billed request returned HTTP 200), then the guardrail stopped the run. `max-ai-credits` was raised to 15 for the next runs; results of those runs are appended below when they exist. The statement above that a Copilot PAT is the missing piece is **withdrawn**.
