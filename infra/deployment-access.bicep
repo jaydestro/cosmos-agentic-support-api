@@ -5,11 +5,16 @@ targetScope = 'resourceGroup'
 @maxLength(12)
 param namePrefix string = 'resolve'
 
+@description('Allow the deployment identity to grant OpenAI User to the application identity for the live investigator.')
+param enableLiveModel bool = false
+
 var suffix = uniqueString(resourceGroup().id)
 var contributor = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var rbacAdministrator = 'f58310d9-a9f6-439a-9e8d-f62e7b41a168'
 var blobOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var metricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
+var openAiUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var allowedRoleIds = enableLiveModel ? '${blobOwner}, ${metricsPublisher}, ${openAiUser}' : '${blobOwner}, ${metricsPublisher}'
 
 resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: '${namePrefix}-app-${suffix}'
@@ -35,12 +40,12 @@ resource restrictedAssignments 'Microsoft.Authorization/roleAssignments@2022-04-
     principalId: deployIdentity.properties.principalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', rbacAdministrator)
     conditionVersion: '2.0'
-    condition: replace(replace(replace('''
+    condition: replace(replace('''
       (
         (!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'}))
         OR
         (
-          @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {__BLOB_OWNER_ID__, __METRICS_PUBLISHER_ID__}
+          @Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {__ALLOWED_ROLE_IDS__}
           AND
           @Request[Microsoft.Authorization/roleAssignments:PrincipalId] GuidEquals __APP_PRINCIPAL_ID__
         )
@@ -50,11 +55,11 @@ resource restrictedAssignments 'Microsoft.Authorization/roleAssignments@2022-04-
         (!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'}))
         OR
         (
-          @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {__BLOB_OWNER_ID__, __METRICS_PUBLISHER_ID__}
+          @Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {__ALLOWED_ROLE_IDS__}
           AND
           @Resource[Microsoft.Authorization/roleAssignments:PrincipalId] GuidEquals __APP_PRINCIPAL_ID__
         )
       )
-      ''', '__BLOB_OWNER_ID__', blobOwner), '__METRICS_PUBLISHER_ID__', metricsPublisher), '__APP_PRINCIPAL_ID__', appIdentity.properties.principalId)
+      ''', '__ALLOWED_ROLE_IDS__', allowedRoleIds), '__APP_PRINCIPAL_ID__', appIdentity.properties.principalId)
   }
 }
