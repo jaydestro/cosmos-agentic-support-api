@@ -27,6 +27,7 @@ const sha = 'a'.repeat(40);
 const guid = '11111111-1111-1111-1111-111111111111';
 const repository = 'jaydestro/cosmos-agentic-support-api';
 const environment = {
+  can_admins_bypass: false,
   protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { id: 1 } }] }],
 };
 const run = {
@@ -35,12 +36,16 @@ const run = {
 };
 const app = {
   id: `/subscriptions/${guid}/resourceGroups/resolve-demo/providers/Microsoft.Web/sites/resolve-api`,
-  kind: 'functionapp,linux', reserved: true, httpsOnly: true, publicNetworkAccess: 'Enabled',
-  functionAppConfig: { runtime: { name: 'node', version: '24' }, scaleAndConcurrency: { alwaysReady: [] } },
-  serverFarmId: `/subscriptions/${guid}/resourceGroups/resolve-demo/providers/Microsoft.Web/serverfarms/resolve-plan`,
-  defaultHostName: 'resolve-api-abc.eastus-01.azurewebsites.net',
+  kind: 'functionapp,linux',
+  properties: {
+    reserved: true, httpsOnly: true, publicNetworkAccess: 'Enabled',
+    functionAppConfig: { runtime: { name: 'node', version: '24' }, scaleAndConcurrency: { alwaysReady: [] } },
+    serverFarmId: `/subscriptions/${guid}/resourceGroups/resolve-demo/providers/Microsoft.Web/serverfarms/resolve-plan`,
+    defaultHostName: 'resolve-api-abc.eastus-01.azurewebsites.net',
+  },
 };
-const plan = { sku: { name: 'FC1', tier: 'FlexConsumption' }, reserved: true };
+const plan = { sku: { name: 'FC1', tier: 'FlexConsumption' }, properties: { reserved: true } };
+const linuxShell = { skip: process.platform !== 'linux' };
 
 async function execute(id: string, options: {
   env?: Record<string, string>;
@@ -48,12 +53,14 @@ async function execute(id: string, options: {
   run?: unknown;
   app?: unknown;
   plan?: unknown;
+  latestSha?: string;
 } = {}): Promise<{ status: number | null; output: string; summary: string; githubOutput: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'resolve-cd-'));
   try {
     const fixtures = {
       environment: options.environment ?? environment, run: options.run ?? run,
       app: options.app ?? app, plan: options.plan ?? plan,
+      latest: { object: { sha: options.latestSha ?? sha } },
     };
     for (const [name, value] of Object.entries(fixtures)) {
       await writeFile(join(directory, `${name}.json`), JSON.stringify(value));
@@ -62,8 +69,9 @@ async function execute(id: string, options: {
       gh: `#!/bin/bash
 set -euo pipefail
 case "$*" in
-  *environments/azure-demo) cat "$RUNNER_TEMP/environment.json";;
+  *environments/azure-api-cd) cat "$RUNNER_TEMP/environment.json";;
   *actions/runs/123) cat "$RUNNER_TEMP/run.json";;
+  *git/ref/heads/main*) node -e 'console.log(JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP+"/latest.json")).object.sha)';;
   *) exit 99;;
 esac
 `,
@@ -71,8 +79,8 @@ esac
 set -euo pipefail
 case "$*" in
   "account show --query id -o tsv") echo "$ACCOUNT_ID";;
-  "functionapp show --resource-group resolve-demo --name resolve-api -o json") cat "$RUNNER_TEMP/app.json";;
-  "appservice plan show --ids /subscriptions/$SUBSCRIPTION_ID/resourceGroups/resolve-demo/providers/Microsoft.Web/serverfarms/resolve-plan -o json") cat "$RUNNER_TEMP/plan.json";;
+  "rest --method get --url https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/resolve-demo/providers/Microsoft.Web/sites/resolve-api?api-version=2024-11-01 -o json") cat "$RUNNER_TEMP/app.json";;
+  "rest --method get --url https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/resolve-demo/providers/Microsoft.Web/serverfarms/resolve-plan?api-version=2024-11-01 -o json") cat "$RUNNER_TEMP/plan.json";;
   *) exit 99;;
 esac
 `,
@@ -90,9 +98,9 @@ while (($#)); do
   esac
 done
 case "$url" in
-  */health) printf '%s' "$HEALTH_BODY" > "$output"; printf '%s' "$HEALTH_CODE";;
-  */ready) printf '%s' "$READY_BODY" > "$output"; printf '%s' "$READY_CODE";;
-  */cases) printf '%s' "$CASES_CODE";;
+  */api/health) printf '%s' "$HEALTH_BODY" > "$output"; printf '%s' "$HEALTH_CODE";;
+  */api/ready) printf '%s' "$READY_BODY" > "$output"; printf '%s' "$READY_CODE";;
+  */api/cases) printf '%s' "$CASES_CODE";;
   *) exit 99;;
 esac
 exit "\${CURL_EXIT:-0}"
@@ -115,7 +123,7 @@ exit "\${CURL_EXIT:-0}"
         GITHUB_REPOSITORY: repository, CI_RUN_ID: '123', CI_RUN_ATTEMPT: '1', CI_SHA: sha,
         RESOURCE_GROUP: 'resolve-demo', APP_NAME: 'resolve-api',
         CLIENT_ID: guid, TENANT_ID: guid, SUBSCRIPTION_ID: guid, ACCOUNT_ID: guid,
-        BASE_URL: `https://${app.defaultHostName}`,
+        BASE_URL: `https://${app.properties.defaultHostName}/api`,
         HEALTH_BODY: '{"status":"ok"}', READY_BODY: '{"status":"ok"}',
         HEALTH_CODE: '200', READY_CODE: '200', CASES_CODE: '401',
         ...options.env,
@@ -141,11 +149,12 @@ it('automatically hands off only enabled successful same-repository main push CI
     "github.event.workflow_run.head_repository.full_name == github.repository && vars.AZURE_API_CD_ENABLED == 'true'");
   assert.deepEqual(workflow['permissions'], { contents: 'read' });
   assert.deepEqual(job['permissions'], { contents: 'read', actions: 'read', 'id-token': 'write' });
-  assert.equal(job['environment'], 'azure-demo');
+  assert.equal(job['environment'], 'azure-api-cd');
   assert.equal(job['runs-on'], 'ubuntu-24.04');
   assert.equal(job['timeout-minutes'], 20);
   assert.equal(step('smoke')['timeout-minutes'], 5);
-  assert.deepEqual(workflow['concurrency'], { group: 'resolve-azure-proof', 'cancel-in-progress': false });
+  assert.equal(workflow['concurrency'], undefined);
+  assert.deepEqual(job['concurrency'], { group: 'resolve-demo-deploy', 'cancel-in-progress': false, queue: 'max' });
   const download = steps.find((entry) => String(entry['uses']).startsWith('actions/download-artifact@'));
   assert.ok(download);
   assert.deepEqual(download['with'], {
@@ -161,6 +170,8 @@ it('automatically hands off only enabled successful same-repository main push CI
     'subscription-id': '${{ env.SUBSCRIPTION_ID }}',
   });
   assert.ok(steps.indexOf(step('target')) < steps.indexOf(step('deploy')));
+  assert.equal(steps.indexOf(step('freshness')) + 1, steps.indexOf(step('deploy')));
+  assert.equal(record(job['env'])['CLIENT_ID'], '${{ vars.AZURE_API_CD_CLIENT_ID }}');
   assert.deepEqual(step('deploy')['with'], {
     'app-name': '${{ env.APP_NAME }}', package: '${{ runner.temp }}/resolve-package',
     sku: 'flexconsumption', 'remote-build': false,
@@ -195,7 +206,7 @@ it('all executable workflow actions use the exact official reviewed full commit 
   }
 });
 
-it('round-trips the main CI archive into CD without rebuilding or uploading diagnostics', async () => {
+it('round-trips the main CI archive into CD without rebuilding or uploading diagnostics (Linux)', linuxShell, async () => {
   const ci = record(parse(await readFile(new URL('.github/workflows/checks.yml', root), 'utf8')));
   const ciSteps = record(record(ci['jobs'])['check'])['steps'] as unknown[];
   const archive = ciSteps.map(record).find((entry) => entry['name'] === 'Archive the checked production package');
@@ -230,7 +241,7 @@ it('round-trips the main CI archive into CD without rebuilding or uploading diag
   }
 });
 
-it('executes CI provenance and approval guards, rejecting missing targets, missing approvals and non-main or unverified runs', async () => {
+it('executes CI provenance and approval guards, rejecting missing targets, missing approvals and non-main or unverified runs (Linux)', linuxShell, async () => {
   const good = await execute('guard');
   assert.equal(good.status, 0, good.output);
   assert.match(good.summary, /Build: passed main CI run 123 attempt 1/);
@@ -245,6 +256,8 @@ it('executes CI provenance and approval guards, rejecting missing targets, missi
     assert.notEqual((await execute('guard', { env })).status, 0);
   }
   for (const invalid of [
+    { ...environment, can_admins_bypass: true },
+    { protection_rules: environment.protection_rules },
     { ...environment, protection_rules: [] },
     { ...environment, protection_rules: [{ type: 'required_reviewers', prevent_self_review: false, reviewers: [1] }] },
     { ...environment, protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [] }] },
@@ -260,25 +273,28 @@ it('executes CI provenance and approval guards, rejecting missing targets, missi
   }
 });
 
-it('executes read-only target guards and rejects wrong subscription, target, runtime, hosting and smoke host', async () => {
+it('executes read-only target guards against actual ARM response envelopes (Linux)', linuxShell, async () => {
   const host = record(JSON.parse(await readFile(new URL('host.json', root), 'utf8')));
   assert.equal(record(record(host['extensions'])['http'])['routePrefix'], '');
   const good = await execute('target');
   assert.equal(good.status, 0, good.output);
-  assert.equal(good.githubOutput, `base_url=https://${app.defaultHostName}\n`);
+  assert.equal(good.githubOutput, `base_url=https://${app.properties.defaultHostName}/api\n`);
   assert.notEqual((await execute('target', { env: { ACCOUNT_ID: 'other' } })).status, 0);
   for (const change of [
-    { id: `${app.id}-other` }, { kind: 'functionapp' }, { reserved: false },
+    { reserved: false },
     { httpsOnly: false }, { publicNetworkAccess: 'Disabled' }, { defaultHostName: 'attacker.example' },
-    { functionAppConfig: { ...app.functionAppConfig, runtime: { name: 'node', version: '22' } } },
-    { functionAppConfig: { ...app.functionAppConfig, scaleAndConcurrency: { alwaysReady: [{ name: 'http', instanceCount: 1 }] } } },
+    { functionAppConfig: { ...app.properties.functionAppConfig, runtime: { name: 'node', version: '22' } } },
+    { functionAppConfig: { ...app.properties.functionAppConfig, scaleAndConcurrency: { alwaysReady: [{ name: 'http', instanceCount: 1 }] } } },
+    { functionAppConfig: { ...app.properties.functionAppConfig, scaleAndConcurrency: {} } },
   ]) {
-    assert.notEqual((await execute('target', { app: { ...app, ...change } })).status, 0, JSON.stringify(change));
+    assert.notEqual((await execute('target', { app: { ...app, properties: { ...app.properties, ...change } } })).status, 0, JSON.stringify(change));
   }
+  assert.notEqual((await execute('target', { app: { ...app, id: `${app.id}-other` } })).status, 0);
+  assert.notEqual((await execute('target', { app: { ...app, kind: 'functionapp' } })).status, 0);
   assert.notEqual((await execute('target', { plan: { ...plan, sku: { name: 'Y1', tier: 'Dynamic' } } })).status, 0);
 });
 
-it('executes bounded anonymous smoke, requiring exact single JSON objects and 401 rather than redirects or authorization success', async () => {
+it('executes bounded anonymous smoke at /api, requiring exact JSON and 401 (Linux)', linuxShell, async () => {
   const good = await execute('smoke');
   assert.equal(good.status, 0, good.output);
   const invalidResponses: Record<string, string>[] = [
@@ -299,4 +315,25 @@ it('executes bounded anonymous smoke, requiring exact single JSON objects and 40
   assert.equal(report['if'], 'always()');
   assert.match(String(report['run']), /Build provenance:.*\n.*Deploy:.*\n.*Unauthenticated HTTP smoke:/);
   assert.match(String(report['run']), /BLOCKED \/ not run here:/);
+});
+
+it('refuses an obsolete main revision immediately before deployment (Linux)', linuxShell, async () => {
+  assert.equal((await execute('freshness')).status, 0);
+  const stale = await execute('freshness', { latestSha: 'b'.repeat(40) });
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.output, /no longer the current main revision/);
+});
+
+it('CD cannot mint provisioning identity tokens and critical jobs preserve their bounded pending queue', async () => {
+  const publisher = await readFile(new URL('infra/api-publisher.bicep', root), 'utf8');
+  assert.match(publisher, /environment:azure-api-cd/);
+  assert.doesNotMatch(publisher, /environment:azure-demo|f58310d9|b24988ac|listKeys/);
+  assert.match(publisher, /scope: app/);
+  assert.match(publisher, /de139f84-1756-47ae-9be6-808fbbe84772/);
+  const provisioning = record(parse(await readFile(new URL('.github/workflows/azure-proof.yml', root), 'utf8')));
+  assert.equal(provisioning['concurrency'], undefined);
+  for (const name of ['preview', 'deploy']) {
+    assert.deepEqual(record(record(provisioning['jobs'])[name])['concurrency'],
+      { group: 'resolve-demo-deploy', 'cancel-in-progress': false, queue: 'max' });
+  }
 });

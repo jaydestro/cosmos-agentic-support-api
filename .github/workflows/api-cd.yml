@@ -7,10 +7,6 @@ on:
 
 permissions:
   contents: read
-concurrency:
-  group: resolve-azure-proof
-  cancel-in-progress: false
-
 jobs:
   deploy:
     if: >-
@@ -20,7 +16,11 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       vars.AZURE_API_CD_ENABLED == 'true'
-    environment: azure-demo
+    environment: azure-api-cd
+    concurrency:
+      group: resolve-demo-deploy
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -34,7 +34,7 @@ jobs:
       CI_SHA: ${{ github.event.workflow_run.head_sha }}
       RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       APP_NAME: ${{ vars.AZURE_FUNCTION_APP_NAME }}
-      CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+      CLIENT_ID: ${{ vars.AZURE_API_CD_CLIENT_ID }}
       TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
     steps:
@@ -52,8 +52,8 @@ jobs:
             [[ "${!name}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
           done
           [[ "$CI_RUN_ID" =~ ^[0-9]+$ && "$CI_RUN_ATTEMPT" =~ ^[0-9]+$ && "$CI_SHA" =~ ^[0-9a-f]{40}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/environments/azure-demo" |
-            jq -e 'any(.protection_rules[];
+          gh api "repos/$GITHUB_REPOSITORY/environments/azure-api-cd" |
+            jq -e '.can_admins_bypass == false and any(.protection_rules[];
               .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length) > 0)'
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" |
             jq -e --arg sha "$CI_SHA" --arg repo "$GITHUB_REPOSITORY" --argjson attempt "$CI_RUN_ATTEMPT" '
@@ -89,21 +89,30 @@ jobs:
         run: |
           set -euo pipefail
           test "$(az account show --query id -o tsv)" = "$SUBSCRIPTION_ID"
-          app=$(az functionapp show --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" -o json)
           expected="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Web/sites/$APP_NAME"
+          app=$(az rest --method get --url "https://management.azure.com$expected?api-version=2024-11-01" -o json)
           jq -e --arg expected "$expected" '
+            .properties as $p |
             (.id | ascii_downcase) == ($expected | ascii_downcase) and
             (.kind | split(",") | index("functionapp") != null and index("linux") != null) and
-            .reserved == true and .httpsOnly == true and .publicNetworkAccess == "Enabled" and
-            .functionAppConfig.runtime == {"name":"node","version":"24"} and
-            ((.functionAppConfig.scaleAndConcurrency.alwaysReady // []) | length) == 0
+            $p.reserved == true and $p.httpsOnly == true and $p.publicNetworkAccess == "Enabled" and
+            $p.functionAppConfig.runtime == {"name":"node","version":"24"} and
+            ($p.functionAppConfig.scaleAndConcurrency.alwaysReady | type) == "array" and
+            ($p.functionAppConfig.scaleAndConcurrency.alwaysReady | length) == 0
           ' <<< "$app"
-          plan=$(jq -er '.serverFarmId' <<< "$app")
-          az appservice plan show --ids "$plan" -o json |
-            jq -e '.sku.name == "FC1" and .sku.tier == "FlexConsumption" and .reserved == true'
-          host=$(jq -er '.defaultHostName' <<< "$app")
+          plan=$(jq -er '.properties.serverFarmId' <<< "$app")
+          az rest --method get --url "https://management.azure.com$plan?api-version=2024-11-01" -o json |
+            jq -e '.sku.name == "FC1" and .sku.tier == "FlexConsumption" and .properties.reserved == true'
+          host=$(jq -er '.properties.defaultHostName' <<< "$app")
           [[ "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.azurewebsites\.net$ ]]
-          echo "base_url=https://$host" >> "$GITHUB_OUTPUT"
+          echo "base_url=https://$host/api" >> "$GITHUB_OUTPUT"
+      - name: Refuse stale main artifacts immediately before deployment
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ "$latest" == "$CI_SHA" ]] || { echo "::error::The checked artifact is no longer the current main revision"; exit 1; }
       - name: Deploy prebuilt package through Flex OneDeploy
         id: deploy
         uses: Azure/functions-action@c5060b3b8bb1ebbcb531abd00c822ecbaa8ea656 # v1

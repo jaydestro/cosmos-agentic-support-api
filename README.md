@@ -806,6 +806,37 @@ selector matching both a work id and its `-g1` suffix. Exact work-id matching fi
 
 ## Deployment preparation and Azure proof gate (P07)
 
+### Workstation-independent API CD
+
+The successful **main push** CI run publishes only its checked production package.
+`api-cd.yml` deploys that immutable run/attempt artifact without rebuilding. It
+rejects stale main revisions immediately before OneDeploy and probes the real
+`/api/health`, `/api/ready` and anonymous `/api/cases` routes.
+
+API publication uses a separate `azure-api-cd` environment and a separate
+user-assigned identity. `infra/api-publisher.bicep` creates its OIDC trust; it
+cannot mint the `azure-demo` provisioning identity's credentials. With
+`grantAccess=true`, an authorized administrator grants Website Contributor only
+on the existing app and Reader only on its hosting plan, not Cosmos, model or IAM
+permissions. Run this grant only after the application exists.
+
+The environment must have an independent required reviewer, self-review
+prevention and `can_admins_bypass=false`; limit deployment branches to `main`.
+Configure `AZURE_API_CD_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+`AZURE_RESOURCE_GROUP` and `AZURE_FUNCTION_APP_NAME` as nonsecret environment
+variables. Repository opt-in `AZURE_API_CD_ENABLED` remains off until the target
+and the grants are verified. No publish profiles or deployment secrets are used.
+The provisioning environment must also disable administrator bypass.
+
+Only eligible deployment jobs join the shared `resolve-demo-deploy` concurrency
+group. `queue: max` preserves up to 100 pending jobs instead of replacing the
+previous pending run; this uses the
+[supported GitHub queue setting](https://github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues/).
+Shell-execution guard tests run on Linux CI, not Windows. Static workflow checks
+remain cross-platform; skipped local shell tests are not reported as passed.
+Actual Azure CD remains unexecuted until the scoped grants and environment
+approval are available.
+
 **The identity-only bootstrap has been deployed in East US; the API and Cosmos DB
 have not been deployed.** The full template still requires explicit Entra tenant/
 API audience, SPA client and delegated scope parameters. No credentials or
