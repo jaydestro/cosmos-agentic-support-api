@@ -122,5 +122,5 @@ that are likewise **not measured**.
 
 ## Not proven on Azure
 
-Interactive browser (MSAL) sign-in; approval by a second *human* identity; GitHub OIDC deployment; live-model behaviour (not
+Approval by a second *human* identity (the API was exercised with real Entra tokens; the optional browser console was not signed into); GitHub OIDC deployment; live-model behaviour (not
 configured); deployment with `supportingAuth=identity`. Application Insights correlation is shown in [entra-proof.md](entra-proof.md).

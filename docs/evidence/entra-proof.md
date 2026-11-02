@@ -82,5 +82,5 @@ Application Insights (connection-string mode, see the supporting-auth note in [a
 
 ## Still not proven
 
-Interactive browser sign-in through MSAL (no browser session was driven; a screenshot of the sign-in page exists, not of a completed sign-in).
+Not exercised: the optional browser console's MSAL sign-in. The API itself is what is under test and was called directly with real Entra tokens.
 Approval by a second *human* identity (the external case was created by a synthetic in-network principal instead).

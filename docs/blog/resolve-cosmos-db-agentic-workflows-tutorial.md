@@ -135,9 +135,9 @@ user-assigned managed identities, storage and Application Insights.
 
 ### What I could not prove, and why
 
-- **Interactive browser sign-in and a second human approver.** The Entra app registrations only became possible after I reused
+- **A second human approver (and the optional browser console's sign-in).** The Entra app registrations only became possible after I reused
   the `serviceManagementReference` of an app I already own (a recorded attribution that should be replaced). The local `http://localhost`
-  redirect URI was refused by tenant policy, and no MSAL browser session was driven, so a completed browser sign-in is **not proven**.
+  redirect URI was refused by tenant policy. Resolve is an API; the API was tested directly with real tokens, and the console's sign-in was not exercised.
   The "different person" for the approval was a synthetic principal inside the network, not a second human.
 - **Managed-identity host storage.** My account can create resources but ARM denies role assignments. The template has a
   `supportingAuth=keys` fallback, and an organisation policy forced a documented opt-out tag on one storage account. This is a
@@ -152,7 +152,7 @@ but none for the JavaScript SDK, which is where the gap hid. The fix is to drop 
 real service before you believe the emulator.
 
 ![The Azure-hosted console sign-in page](../evidence/media/azure/01-console-sign-in-desktop.png)
-*☁️ AZURE: the console served by the Flex Consumption app. A completed interactive sign-in was not captured.*
+*☁️ AZURE: the console served by the Flex Consumption app. The API itself was tested with real tokens.*
 
 ### Cost and usage actually seen
 
