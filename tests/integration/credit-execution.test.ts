@@ -91,7 +91,7 @@ describe('reconciling with what the provider already holds', () => {
     assert.equal(stopped.kind, 'outbox');
     assert.equal(stopped.lastError?.code, 'provider_key_conflict');
     assert.deepEqual(stopped.actions, ['requeue']);
-    assert.equal(await statusOf(caseId), 'needs_attention');
+    await awaitCase(representative, caseId, 'needs_attention');
     expectProblem(await creditOf(representative, caseId), 404, 'not_found');
     assert.deepEqual((await creditsOf(caseId)).map((entry) => entry.amount), [usd(100)], 'nothing was added to the ledger');
 
@@ -101,7 +101,7 @@ describe('reconciling with what the provider already holds', () => {
     const again = await awaitOutbox(caseId, creditOutboxId(), 'poison');
     assert.equal(again.attempts, 1, 'the requeued item had a fresh attempt, and the same conflict ended it');
     assert.equal(again.lastError?.code, 'provider_key_conflict');
-    assert.equal(await statusOf(caseId), 'needs_attention');
+    await awaitCase(representative, caseId, 'needs_attention');
 
     // An operator removes the record that does not belong to this approval, then requeues.
     await dropFromProvider(wrong.id);
@@ -150,7 +150,7 @@ describe('a provider that does not answer', () => {
     const stopped = await awaitWork(operator, 'poison', workId, 120_000);
     assert.equal(stopped.attempts, 5);
     assert.equal(stopped.lastError?.code, 'provider_unavailable');
-    assert.equal(await statusOf(caseId), 'needs_attention');
+    await awaitCase(representative, caseId, 'needs_attention');
     assert.equal((await creditsOf(caseId)).length, 0, 'the provider never answered, so nothing was issued');
     const plan = await faultPlanOf(caseId);
     assert.deepEqual({ remaining: plan?.remaining, fired: plan?.fired }, { remaining: 0, fired: 5 });
