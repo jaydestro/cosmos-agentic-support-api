@@ -20,6 +20,109 @@ prepared infrastructure do not satisfy that criterion.
 
 ## Status
 
+### Active delivery: the live-agent API walkthrough (2026-11-02)
+
+The goal is a small usable API demonstration: submit a fictional dispute over HTTP,
+let the **live model** use the restricted investigation tools, inspect Cosmos-backed
+state while approval is pending, then make an explicit authorized decision and inspect
+one simulated credit. Deterministic demo runs are not evidence of live inference.
+
+The resource prefix is `resolve-demo`, in `rg-resolve-demo` (East US). Its application,
+seeder, provisioning and separate API-publisher identities have been created; the
+model and new API have not. The existing `rg-resolve-proof` API is
+retained until the replacement works. Do not delete other subscriptions' or users'
+resources. The live model candidate is GPT-4.1-mini `2025-04-14`, Standard capacity 10:
+the regional catalog's **exact** quota key has sufficient headroom, and provider
+validation passed. GPT-4o-mini was rejected as deprecated and is not used.
+
+The ordered work is:
+
+1. Keep cloud implementation in [issue #7](https://github.com/jaydestro/cosmos-agentic-support-api/issues/7)
+   and [cloud-worker PR #8](https://github.com/jaydestro/cosmos-agentic-support-api/pull/8);
+   these GitHub jobs continue if the workstation is shut down. Keyless private
+   repeat seeding is also implemented by the independent cloud worker in
+   [issue #12 / PR #14](https://github.com/jaydestro/cosmos-agentic-support-api/pull/14).
+2. Add a small authenticated API CLI with separate start, inspect and decision commands.
+3. Deploy the keyless namespace and live model through protected CD, then seed explicitly.
+4. Exercise the live journey, existing safety tests and a cloud code review; fix all comments.
+5. Capture API examples, screenshots and video, then update the practical blog with measured results.
+
+**One cloud prerequisite is currently blocked:** this Azure caller can create resources
+but cannot perform `Microsoft.Authorization/roleAssignments/write`. No Owner role is
+needed: an identity with scoped role-assignment authority must run the one-time access
+bootstrap below in the selected demo subscription. It grants Contributor only in this
+resource group and constrains the deployment identity's role writes to Blob Data Owner,
+Monitoring Metrics Publisher and OpenAI User for the application identity only.
+It grants nothing to the seeder and does not enable storage keys or a policy exception.
+
+```sh
+az deployment group create --resource-group rg-resolve-demo \
+  --name resolve-demo-access --template-file infra/deployment-access.bicep \
+  --parameters namePrefix=resolve-demo enableLiveModel=true
+```
+
+Existing run limits remain 8 steps, 12 tool calls, 8 model calls, 30,000 tokens,
+USD 0.25 per run, 2 retries per call/4 per run and 90 seconds active time; tenant
+limits remain 3 active runs, 25 cases/day and USD 2/day of live inference allowance.
+Approval expires separately after 72 hours. Unknown usage is charged at its reservation.
+No budget is reset or silently raised for this walkthrough.
+
+The protected infrastructure workflow takes `AZURE_NAME_PREFIX=resolve-demo`.
+Its explicit `enable_live_model` input previews and provisions the pinned model
+and passes its account, endpoint and deployment into the API template. Live mode
+also requires positive reviewed input/output token prices and a valid pricing
+date in the provisioning environment; none is defaulted to zero. The defaults
+still require deliberate opt-in to inference. Actual execution remains blocked
+on the scoped bootstrap above, not on a missing browser console.
+
+The CLI is exercised against the real local HTTP host, change-feed trigger and
+provider ledger by `tests/integration/demo-cli.test.ts` (one test passed).
+Its 40 unit checks passed, as did nine infrastructure checks, typecheck and lint.
+Local Core Tools 4.15.2 failed startup with `Value cannot be null (provider)`;
+the same integration command passed with the CI-pinned 4.16.0 in an isolated
+`.local/core-tools-4.16.0` directory, without changing the global installation.
+An exploratory local Qwen2.5 0.5B run did not produce an accepted proposal within
+the unchanged limits; it is **not** a successful live-agent demonstration.
+
+Use a delegated Azure CLI sign-in for the intended user and configure these
+nonsecret values from the eventual deployment:
+
+```powershell
+$env:RESOLVE_API = 'https://<function-app-host>/api'
+$env:RESOLVE_SCOPE = 'api://<api-registration-client-id>/.default'
+
+# This starts a live investigation and stops at the durable approval wait.
+npm run demo -- start --base-url $env:RESOLVE_API --scope $env:RESOLVE_SCOPE --idempotency-key blog-duplicate-case-20261102
+
+npm run demo -- inspect --base-url $env:RESOLVE_API --scope $env:RESOLVE_SCOPE --case-id <case-id>
+
+# Run separately as an authorized approver who did not create the case.
+npm run demo -- approve --base-url $env:RESOLVE_API --scope $env:RESOLVE_SCOPE --case-id <case-id> --version 1
+```
+
+`--mode demo` explicitly requires a deterministic server. It does not switch a
+server or fall back from live inference. The CLI obtains a delegated token through
+`AzureCliCredential`, never stores it, and never assigns roles or signs in for you.
+Approval/rejection bind to the exact requested proposal version, digest and policy.
+An incomplete run exits 2 and keeps the case identifier; inspect it rather than
+starting another case with a new key. Run `npm run demo -- --help` for bounded
+timeouts, polling and the rejection command.
+
+Cloud review identified six delivery issues in PR #8 and two CLI issues in PR #9.
+The fixes separate publication from provisioning trust, prohibit approval bypass,
+reject stale revisions, preserve the bounded deployment queue, target the actual
+API paths, keep shell tests on Linux CI, handle poll expiry and allow decisions
+on persisted cases while new inference is disabled. The corresponding regression
+checks are required before merge; no review is treated as deployment evidence.
+
+The first CI secret scan flagged a deliberately synthetic idempotency fixture,
+not a credential. The current literal was simplified; a path-and-exact-value
+history allowance covers only the old test marker. Scanner tests prove that the
+same marker elsewhere and a generated credential-shaped probe still fail.
+Request deadlines now cover token acquisition, fetch and bounded response-body
+consumption with a referenced timer; they do not depend on a fetch implementation
+honouring abort signals. Responses are limited to 1 MiB before JSON parsing.
+
 | Stage | Scope | Status |
 |---|---|---|
 | P01 | Preflight and plan | **done** (this file; evidence below) |

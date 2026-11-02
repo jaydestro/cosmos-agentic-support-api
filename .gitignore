@@ -19,6 +19,7 @@ playwright-report/
 /infra/main.json
 /infra/identities.json
 /infra/deployment-access.json
+/infra/model.json
 *.log
 
 # Local secrets and configuration; sanitized templates remain trackable
