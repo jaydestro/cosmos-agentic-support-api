@@ -15,7 +15,7 @@ engine:
     max-retries: 0
 timeout-minutes: 10
 max-turns: 8
-max-ai-credits: 2
+max-ai-credits: 15
 concurrency:
   group: resolve-contract-review-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -70,7 +70,7 @@ and a surgical recommendation. Do not claim tests ran or fabricate Azure evidenc
 On manual dispatch without a PR, produce a job summary/noop instead of publishing
 to another issue or creating one.
 
-The agent maximum is eight turns, two AI credits (a soft limit, not a dollar cap),
+The agent maximum is eight turns, fifteen AI credits (a soft limit, not a dollar cap),
 ten minutes and zero harness retries. Threat detection separately gets one credit,
 four turns, two minutes per attempt and zero detector retries. No automatic
 workflow rerun is requested. Stop on exhaustion or ambiguous

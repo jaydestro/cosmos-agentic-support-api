@@ -12,7 +12,7 @@ engine:
     max-retries: 0
 timeout-minutes: 10
 max-turns: 8
-max-ai-credits: 2
+max-ai-credits: 15
 concurrency:
   group: resolve-docs-maintainer
   cancel-in-progress: false
@@ -79,7 +79,7 @@ pricing, measured usage or savings. A sample is not production certification.
 
 Use the supported draft-PR safe output only. Its body must explain the source
 evidence, what was not executed, any uncertainty, and available automation usage.
-The agent maximum is eight turns, two AI credits (soft, not a dollar cap), ten
+The agent maximum is eight turns, fifteen AI credits (soft, not a dollar cap), ten
 minutes and zero harness retries. Threat detection separately gets one credit,
 four turns, two minutes per attempt and zero detector retries. No automatic
 workflow rerun is requested. Stop and report partial/unknown usage
