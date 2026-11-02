@@ -72,7 +72,7 @@ Log of the proof run: [azure-proof-run.log](azure-proof-run.log) (the first seed
 | Cloud seed, run 2 (repeat) | 0 created, **56 unchanged**, 0 drift, read-back clean (non-destructive repeat) |
 | Seed identity reads `cases` / `provider` | **403** / **403** (real Cosmos RBAC) |
 | App identity deletes a provider record | **403** |
-| App identity writes a `reference` document | denied (403 class; the first run printed `HTTP 0` because the SDK error carries `statusCode`, fixed in `prove.ts`) |
+| App identity writes a `reference` document | **403** (the final run exits 0; the earlier run printed `HTTP 0` because the SDK error carries `statusCode`, fixed in `prove.ts`) |
 | App identity reads reference data | positive: 46 documents for tenant `aurora`, 2.99 RU |
 | App identity reads `leases` | positive: 2 lease documents (the deployed trigger holds them) |
 | Case creation, identical idempotency-key replay | 202, 202 (same case) |
@@ -81,13 +81,13 @@ Log of the proof run: [azure-proof-run.log](azure-proof-run.log) (the first seed
 | Representative approves | 403 |
 | Investigation | performed by the deployed trigger; proposal v1 waits for a human, no compute held |
 | Approval bound to a stale digest | 409 |
-| Eight concurrent identical approvals | 202 x6 and 409 x2 |
+| Eight concurrent approvals (6 from one approver, 2 from another) | run A: 202 x6 and 409 x2; final run: 202 x2 and 409 x6. Timing decides which callers see the idempotent replay and which see the conflict; the result is the same: one decision, one credit |
 | End state | case `credited`, 4,900 minor USD, simulated provider |
 | **Provider ledger records for the case** | **1** |
 | Second create of the same provider key | 409 (create-only deduplication) |
 | Point read | 1.00 RU |
 | Partition-scoped parameterized query (23 documents) | 3.86 RU |
-| Tenant listing with `tenantId` filter and no partition key option | 2.96 to 2.99 RU; `listCases` handler 200 with 3 items |
+| Tenant listing with `tenantId` filter and no partition key option | 2.96 to 3.03 RU; `listCases` handler 200 with 3 to 4 items |
 | Replace with a stale ETag | 412 |
 | Timeline page 1 | 5 items with a continuation token |
 
@@ -111,8 +111,8 @@ the emulator and `listCases` returned 200 on Azure.
 
 | Quantity | Value | Source |
 |---|---|---|
-| Cosmos DB requests, last three hours of the proof window | 112,043 | Azure Monitor `TotalRequests` |
-| Cosmos DB request units, same window | about 12,700 RU | Azure Monitor `TotalRequestUnits` |
+| Cosmos DB requests, window from first deployment to the final proof run (Azure Monitor, may lag) | 116,211 | Azure Monitor `TotalRequests` |
+| Cosmos DB request units, same window | about 13,000 RU | Azure Monitor `TotalRequestUnits` |
 | Of which a single proof run | well under 100 RU of explicit calls | the per-call RU lines above |
 | Change-feed polling with no cases | about 46,000 requests per hour | metric trend while idle |
 | Dollar cost | **not measured** | billing data had not posted; no estimate is presented as a measurement |

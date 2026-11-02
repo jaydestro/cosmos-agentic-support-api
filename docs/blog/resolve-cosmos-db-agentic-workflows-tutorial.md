@@ -155,7 +155,7 @@ real service before you believe the emulator.
 
 | Item | Value |
 |---|---|
-| Cosmos DB request units, three-hour window around the proofs | about 12,700 RU over 112,043 requests (Azure Monitor) |
+| Cosmos DB request units, window from first deployment to the final proof run | about 13,000 RU over 116,211 requests (Azure Monitor) |
 | Idle change-feed polling | about 46,000 requests/hour, a real recurring cost to watch |
 | Cosmos DB, Functions, storage, private endpoint, Application Insights, Container Instance dollars | **not measured** (billing data had not posted) |
 | Live-model usage | **not measured** (demo mode, no model configured) |

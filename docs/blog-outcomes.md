@@ -243,4 +243,4 @@ Superseded blockers are resolved or restated in [evidence/azure-proof.md](eviden
 - Azure-only bug: prefix partition key queries return HTTP 400 on the service (accepted by the emulator); fixed in src/cases/store.ts.
 - Not proven: real Entra user tokens (tenant requires a ServiceManagementReference to create an app registration), identity-based host storage (no role-assignment authority), OIDC deployment.
 - GitHub Agentic Workflows: 3 executed runs, 2 agent failures (authentication_failed), no output to accept or reject; about 31 agent credits billed against a soft limit of 2 per run.
-- Costs: Cosmos RU measured from metrics (about 12,700 RU); dollar costs not measured.
+- Costs: Cosmos RU measured from metrics (about 13,000 RU); dollar costs not measured.
