@@ -36,14 +36,13 @@ account has no provisioned capacity; the capability list is the authoritative re
    policy's documented opt-out tag `Az.Sec.DisableLocalAuth.Storage::Skip`. **This is a recorded policy exception on one storage
    account. It must be removed by redeploying with `supportingAuth=identity` after an administrator runs
    `infra/deployment-access.bicep`.** Cosmos DB access is managed identity in both modes and was not affected.
-4. **No real Entra app registration (blocker).** `az ad app create` was refused: the tenant requires a `ServiceManagementReference`
-   that this session does not have. `ENTRA_AUDIENCE` is an unregistered `api://` placeholder, so **no user-delegated Entra token for
-   the API could be obtained**. The sign-in page is therefore reachable but real browser sign-in is **not proven**.
+4. **Entra app registrations were created later the same day** (see [entra-proof.md](entra-proof.md)). The first proof runs below used synthetic principals because the registration was initially refused (the tenant requires a `serviceManagementReference`; one was then taken from the user's own existing registration, which attributes the demo to it and should be replaced). Real-token role, tenant and separation-of-duties denials and a real-token external approval are now proven in [entra-proof.md](entra-proof.md).
 5. **Seeding and the end-to-end driver ran from inside the VNet** in an Azure Container Instance on the delegated `seed-runner`
    subnet (`tools/azure/run-in-vnet.ps1`), with both managed identities attached. The container receives code from an Azure Files
    share. The driver (`tools/azure/prove.ts`) calls the real handlers in-process with **synthetic principals** (no Entra), against the
    real Cosmos account, while the **deployed Functions host's change-feed trigger** does the investigation and the credit
-   execution. That separates what Azure proved (Cosmos, identity, network, trigger, leases) from what stays unproven (Entra tokens).
+   execution. That separates what Azure proved (Cosmos, identity, network, trigger, leases) from the Entra checks, which were added afterwards
+   with real tokens in [entra-proof.md](entra-proof.md).
 6. **GitHub OIDC deployment was not used.** The deployment identity has no role grants (same RBAC limit), so deployment used the
    operator's own `az` session. `azure-proof.yml` remains prepared, not executed.
 
@@ -58,7 +57,7 @@ account has no provisioned capacity; the capability list is the authoritative re
 | `GET /api/cases` with a malformed bearer | **401** |
 
 The token denials are real Entra-issued tokens rejected by the API's validation. Role and tenant denials *with* a valid API-audience token
-are **not proven** (item 4).
+are in [entra-proof.md](entra-proof.md).
 
 ## Inside the network (container instance, app and seed managed identities)
 
@@ -123,6 +122,5 @@ that are likewise **not measured**.
 
 ## Not proven on Azure
 
-Real user-delegated Entra tokens and role/tenant denials with an API-audience token; real browser sign-in; Application Insights
-correlation (not queried); GitHub OIDC deployment; live-model behaviour (not configured); deployment with
-`supportingAuth=identity`.
+Interactive browser (MSAL) sign-in; approval by a second *human* identity; GitHub OIDC deployment; live-model behaviour (not
+configured); deployment with `supportingAuth=identity`. Application Insights correlation is shown in [entra-proof.md](entra-proof.md).

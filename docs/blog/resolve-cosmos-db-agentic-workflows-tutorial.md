@@ -129,13 +129,16 @@ user-assigned managed identities, storage and Application Insights.
 | Real role denials | seeder reading `cases`/`provider`: 403; app deleting a provider record: 403 |
 | Safe repeat seeding | run 1 created 56 documents; run 2 created 0, left 56 unchanged, with clean read-back |
 | API token denials | no token and an Azure-Resource-Manager-audience Entra token both get **401** |
+| Real Entra role and tenant denials | a Representative-only token gets **403 `forbidden_role`** on approve and operator work; roles in two tenants get **403 `forbidden_tenant`**; a borealis token reading an aurora case gets **404**; the creator-approver gets **403 `forbidden_separation_of_duties`** (see [entra-proof.md](../evidence/entra-proof.md)) |
+| Real-token approval | a case created by another principal was approved over HTTPS by a real `Resolve.Approver.aurora` token (**202**), the deployed trigger credited it, **1 ledger record** |
 | End-to-end credit | create case → deployed trigger investigates → approval (8 concurrent) → deployed trigger executes → **1 ledger record**, case `credited` |
 
 ### What I could not prove, and why
 
-- **Real Entra user tokens and per-role denials.** The tenant refused to create an app registration without a
-  `ServiceManagementReference`. The Azure end-to-end run therefore drove the real handlers from a container *inside the VNet*
-  with synthetic principals. Cosmos, identity, network and the trigger are real; Entra sign-in is **not proven**.
+- **Interactive browser sign-in and a second human approver.** The Entra app registrations only became possible after I reused
+  the `serviceManagementReference` of an app I already own (a recorded attribution that should be replaced). The local `http://localhost`
+  redirect URI was refused by tenant policy, and no MSAL browser session was driven, so a completed browser sign-in is **not proven**.
+  The "different person" for the approval was a synthetic principal inside the network, not a second human.
 - **Managed-identity host storage.** My account can create resources but ARM denies role assignments. The template has a
   `supportingAuth=keys` fallback, and an organisation policy forced a documented opt-out tag on one storage account. This is a
   recorded exception, not a recommendation.
@@ -149,7 +152,7 @@ but none for the JavaScript SDK, which is where the gap hid. The fix is to drop 
 real service before you believe the emulator.
 
 ![The Azure-hosted console sign-in page](../evidence/media/azure/01-console-sign-in-desktop.png)
-*☁️ AZURE: the console served by the Flex Consumption app. Sign-in is the part not proven end to end.*
+*☁️ AZURE: the console served by the Flex Consumption app. A completed interactive sign-in was not captured.*
 
 ### Cost and usage actually seen
 
