@@ -7,6 +7,11 @@ on:
         type: boolean
         required: true
         default: false
+      enable_live_model:
+        description: Deploy the pinned live investigator using the reviewed model prices and README run limits
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -30,6 +35,11 @@ jobs:
       API_AUDIENCE: ${{ vars.ENTRA_API_AUDIENCE }}
       CONSOLE_CLIENT_ID: ${{ vars.CONSOLE_ENTRA_CLIENT_ID }}
       CONSOLE_SCOPE: ${{ vars.CONSOLE_API_SCOPE }}
+      NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
+      ENABLE_LIVE_MODEL: ${{ inputs.enable_live_model }}
+      MODEL_INPUT_PRICE: ${{ vars.LIVE_MODEL_INPUT_USD_PER_MILLION_TOKENS }}
+      MODEL_OUTPUT_PRICE: ${{ vars.LIVE_MODEL_OUTPUT_USD_PER_MILLION_TOKENS }}
+      MODEL_PRICING_DATE: ${{ vars.LIVE_MODEL_PRICING_AS_OF }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -40,10 +50,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in LOCATION RESOURCE_GROUP TENANT_ID API_AUDIENCE CONSOLE_CLIENT_ID CONSOLE_SCOPE; do
+          for name in LOCATION RESOURCE_GROUP TENANT_ID API_AUDIENCE CONSOLE_CLIENT_ID CONSOLE_SCOPE NAME_PREFIX; do
             test -n "${!name}" || { echo "::error::Missing $name"; exit 1; }
           done
           [[ "$LOCATION" =~ ^[a-z0-9]+$ ]]
+          [[ "$NAME_PREFIX" =~ ^[a-z][a-z0-9-]{2,11}$ ]]
+          if [[ "$ENABLE_LIVE_MODEL" == true ]]; then
+            for name in MODEL_INPUT_PRICE MODEL_OUTPUT_PRICE; do
+              [[ "${!name}" =~ ^[0-9]{1,4}(\.[0-9]{1,6})?$ && "${!name}" =~ [1-9] ]] ||
+                { echo "::error::A positive reviewed $name is required"; exit 1; }
+            done
+            [[ "$MODEL_PRICING_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+            test "$(date -d "$MODEL_PRICING_DATE" +%F)" = "$MODEL_PRICING_DATE"
+          fi
           gh api "repos/$GITHUB_REPOSITORY/environments/azure-demo" |
             jq -e 'any(.protection_rules[]; .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length) > 0)'
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
@@ -56,16 +75,23 @@ jobs:
         run: |
           set -euo pipefail
           az bicep install --version v0.39.26
+          [[ "$NAME_PREFIX" =~ ^[a-z][a-z0-9-]{2,11}$ ]]
           az functionapp list-flexconsumption-locations -o json |
             jq -e --arg region "$LOCATION" 'any(.[]; .name == $region)'
           az functionapp list-flexconsumption-runtimes --location "$LOCATION" --runtime node -o json |
             jq -e 'any(.[]; (.version | tostring) == "24")'
           az deployment group validate --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
             --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
-            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE"
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" namePrefix="$NAME_PREFIX"
           az deployment group what-if --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
             --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
-            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE"
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" namePrefix="$NAME_PREFIX"
+          if [[ "$ENABLE_LIVE_MODEL" == true ]]; then
+            az deployment group validate --resource-group "$RESOURCE_GROUP" --template-file infra/model.bicep \
+              --parameters location="$LOCATION" namePrefix="$NAME_PREFIX"
+            az deployment group what-if --resource-group "$RESOURCE_GROUP" --template-file infra/model.bicep \
+              --parameters location="$LOCATION" namePrefix="$NAME_PREFIX"
+          fi
 
   deploy:
     needs: preview
@@ -82,6 +108,11 @@ jobs:
       API_AUDIENCE: ${{ vars.ENTRA_API_AUDIENCE }}
       CONSOLE_CLIENT_ID: ${{ vars.CONSOLE_ENTRA_CLIENT_ID }}
       CONSOLE_SCOPE: ${{ vars.CONSOLE_API_SCOPE }}
+      NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
+      ENABLE_LIVE_MODEL: ${{ inputs.enable_live_model }}
+      MODEL_INPUT_PRICE: ${{ vars.LIVE_MODEL_INPUT_USD_PER_MILLION_TOKENS }}
+      MODEL_OUTPUT_PRICE: ${{ vars.LIVE_MODEL_OUTPUT_USD_PER_MILLION_TOKENS }}
+      MODEL_PRICING_DATE: ${{ vars.LIVE_MODEL_PRICING_AS_OF }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -113,10 +144,36 @@ jobs:
         run: |
           set -euo pipefail
           az bicep install --version v0.39.26
-          app=$(az deployment group create --name resolve-proof --mode Incremental \
+          [[ "$NAME_PREFIX" =~ ^[a-z][a-z0-9-]{2,11}$ ]]
+          model_args=()
+          if [[ "$ENABLE_LIVE_MODEL" == true ]]; then
+            for name in MODEL_INPUT_PRICE MODEL_OUTPUT_PRICE MODEL_PRICING_DATE; do
+              test -n "${!name}" || { echo "::error::Missing $name"; exit 1; }
+            done
+            [[ "$MODEL_INPUT_PRICE" =~ ^[0-9]{1,4}(\.[0-9]{1,6})?$ && "$MODEL_INPUT_PRICE" =~ [1-9] ]]
+            [[ "$MODEL_OUTPUT_PRICE" =~ ^[0-9]{1,4}(\.[0-9]{1,6})?$ && "$MODEL_OUTPUT_PRICE" =~ [1-9] ]]
+            [[ "$MODEL_PRICING_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+            test "$(date -d "$MODEL_PRICING_DATE" +%F)" = "$MODEL_PRICING_DATE"
+            model=$(az deployment group create --name resolve-demo-model --mode Incremental \
+              --resource-group "$RESOURCE_GROUP" --template-file infra/model.bicep \
+              --parameters location="$LOCATION" namePrefix="$NAME_PREFIX" --query properties.outputs -o json)
+            model_args=(
+              "modelAccountName=$(jq -er '.modelAccountName.value' <<< "$model")"
+              "modelEndpoint=$(jq -er '.modelEndpoint.value' <<< "$model")"
+              "modelDeployment=$(jq -er '.modelDeployment.value' <<< "$model")"
+              "modelInputUsdPerMillionTokens=$MODEL_INPUT_PRICE"
+              "modelOutputUsdPerMillionTokens=$MODEL_OUTPUT_PRICE"
+              "modelPricingAsOf=$MODEL_PRICING_DATE"
+              "liveModelApproved=true"
+            )
+          fi
+          az deployment group validate --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
+            --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" namePrefix="$NAME_PREFIX" "${model_args[@]}"
+          app=$(az deployment group create --name resolve-demo --mode Incremental \
             --resource-group "$RESOURCE_GROUP" --template-file infra/main.bicep \
             --parameters location="$LOCATION" entraTenantId="$TENANT_ID" apiAudience="$API_AUDIENCE" \
-            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" \
+            consoleClientId="$CONSOLE_CLIENT_ID" consoleApiScope="$CONSOLE_SCOPE" namePrefix="$NAME_PREFIX" "${model_args[@]}" \
             --query properties.outputs.functionName.value -o tsv)
           test -n "$app"
           echo "app=$app" >> "$GITHUB_OUTPUT"

@@ -158,9 +158,16 @@ async function pollCase(client: ResolveClient, caseId: string, options: Command,
   for (let reads = 0; reads < maxReads; reads++) {
     const remaining = deadline - now();
     if (remaining <= 0) return 'expired';
-    const detail = await apiValue(client.GET('/cases/{caseId}', {
-      params: { path: { caseId } }, signal: AbortSignal.timeout(Math.max(1, Math.ceil(remaining))),
-    }));
+    const pollingDeadlineSignal = AbortSignal.timeout(Math.max(1, Math.ceil(remaining)));
+    let detail: CaseDetail;
+    try {
+      detail = await apiValue(client.GET('/cases/{caseId}', {
+        params: { path: { caseId } }, signal: pollingDeadlineSignal,
+      }));
+    } catch (error) {
+      if (pollingDeadlineSignal.aborted) return 'expired';
+      throw error;
+    }
     ensureMode(detail, options.mode);
     if (!pending(detail.status) && !(options.command === 'approve' && detail.status === 'awaiting_approval')) return 'settled';
     const pause = Math.min(options.pollMs, deadline - now());
@@ -176,7 +183,7 @@ export async function runJourney(command: Command, client: ResolveClient, depend
   if (session.environment.agentMode !== command.mode) {
     throw new CliError('mode_mismatch', 'The deployed API mode differs from --mode; no mutation was submitted.');
   }
-  if (command.mode === 'live' && !session.environment.liveAvailable) {
+  if (command.command === 'start' && command.mode === 'live' && !session.environment.liveAvailable) {
     throw new CliError('live_unavailable', 'The deployed live investigator is unavailable; no demo fallback or mutation was submitted.');
   }
   let caseId: string;

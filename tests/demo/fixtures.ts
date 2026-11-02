@@ -8,7 +8,7 @@ type Schemas = components['schemas'];
 export { CASE_ID, DIGEST } from '../support/web-fixtures.ts';
 export const NOW = Date.parse('2026-11-02T16:00:00Z');
 export const COMMON = ['--base-url', 'https://resolve.test/api', '--scope', 'api://fictional-resolve-app/.default'];
-export const KEY = 'fictional-duplicate-key-001';
+export const KEY = 'test-only-key-0000';
 
 export function liveProposal(overrides: Partial<Schemas['Proposal']> = {}): Schemas['Proposal'] {
   return proposal({ approvalExpiresAt: '2026-11-05T16:00:00Z', ...overrides });

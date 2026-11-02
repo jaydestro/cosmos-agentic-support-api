@@ -16,6 +16,7 @@ const mutationCount = (requests: Request[]): number => requests.filter((request)
 
 describe('Resolve demo CLI argument validation', () => {
   it('defaults to live and preserves the caller-selected stable key', () => {
+    assert.equal(KEY, 'test-only-key-0000', 'idempotency fixture is explicitly synthetic and low entropy');
     const command = parseArgs(start);
     assert.equal(command.command, 'start');
     if (command.command !== 'start') assert.fail('Expected start');
@@ -207,6 +208,64 @@ describe('public case journey and human decisions', () => {
       const h = harness({ session: value });
       assert.equal(await h.run(start), 1);
       assert.equal(mutationCount(h.requests), 0);
+    }
+  });
+
+  it('inspects a persisted live case even when new live inference is disabled', async () => {
+    const h = harness({ session: session({ environment: { agentMode: 'live', liveAvailable: false } }) });
+    assert.equal(await h.run(inspect), 0);
+    assert.equal(mutationCount(h.requests), 0);
+    assert.match(h.output.join(''), /"mode":"live"/);
+    assert.match(h.output.join(''), /"status":"awaiting_approval"/);
+  });
+
+  it('approves the exact persisted live proposal while live inference is disabled', async () => {
+    let caseReads = 0;
+    const h = harness({
+      session: session({ environment: { agentMode: 'live', liveAvailable: false } }),
+      route: (request) => {
+        if (request.url.endsWith('/approve')) return json({ decision: decision('approved'), caseStatus: 'approved' }, 202);
+        if (new URL(request.url).pathname === `/api/cases/${CASE_ID}`) {
+          return json(++caseReads === 1 ? liveCase() : liveCase({ status: 'credited', creditResult: creditResult() }));
+        }
+        return undefined;
+      },
+    });
+    assert.equal(await h.run(approve), 0);
+    const post = h.requests.find((request) => request.method === 'POST');
+    assert.ok(post);
+    assert.deepEqual(await post.json(), { policyVersion: 2, proposalDigest: DIGEST });
+    assert.equal(mutationCount(h.requests), 1);
+    assert.match(h.output.join(''), /"status":"credited"/);
+  });
+
+  it('rejects the exact persisted live proposal while live inference is disabled', async () => {
+    let caseReads = 0;
+    const h = harness({
+      session: session({ environment: { agentMode: 'live', liveAvailable: false } }),
+      route: (request) => {
+        if (request.url.endsWith('/reject')) return json(decision('rejected'));
+        if (new URL(request.url).pathname === `/api/cases/${CASE_ID}`) {
+          return json(++caseReads === 1 ? liveCase() : liveCase({ status: 'rejected' }));
+        }
+        return undefined;
+      },
+    });
+    assert.equal(await h.run(reject), 0);
+    const post = h.requests.find((request) => request.method === 'POST');
+    assert.ok(post);
+    assert.deepEqual(await post.json(), { policyVersion: 2, proposalDigest: DIGEST, reason: 'Fictional invoice requires review.' });
+    assert.equal(mutationCount(h.requests), 1);
+    assert.match(h.output.join(''), /"status":"rejected"/);
+  });
+
+  it('still requires deployed mode matching for inspection and decisions', async () => {
+    for (const command of [inspect, approve, reject]) {
+      const h = harness({ session: session() });
+      assert.equal(await h.run(command), 1);
+      assert.match(h.errors.join(''), /mode_mismatch/);
+      assert.equal(mutationCount(h.requests), 0);
+      assert.equal(h.output.length, 0);
     }
   });
 
@@ -417,6 +476,94 @@ describe('inspection, durable wait and persisted usage', () => {
     assert.match(h.output.join(''), /"wait":"expired"/);
     assert.equal(mutationCount(h.requests), 1);
     assert.equal(h.requests.filter((request) => new URL(request.url).pathname === `/api/cases/${CASE_ID}`).length, 3);
+  });
+
+  it('reports expiry and inspects the accepted case when a status read hits the polling deadline', { timeout: 2000 }, async () => {
+    let reads = 0;
+    const h = harness({
+      detail: liveCase({ status: 'investigating', latestProposal: null }),
+      proposals: [],
+      route: (request) => {
+        if (new URL(request.url).pathname !== `/api/cases/${CASE_ID}` || ++reads !== 1) return undefined;
+        return new Promise<Response>((_resolve, rejectPromise) => {
+          request.signal.addEventListener('abort', () => {
+            rejectPromise(new DOMException('Fictional delayed status cancellation.', 'TimeoutError'));
+          }, { once: true });
+        });
+      },
+    });
+    const keepAlive = setTimeout(() => {}, 1000);
+    try {
+      assert.equal(await h.run(['start', ...COMMON, '--idempotency-key', KEY, '--wait-ms', '100', '--poll-ms', '100']), 2);
+      assert.equal(h.errors.length, 0);
+      assert.match(h.output[0] ?? '', new RegExp(CASE_ID));
+      assert.match(h.output[1] ?? '', /"event":"inspection"/);
+      assert.match(h.output[1] ?? '', /"wait":"expired"/);
+      assert.match(h.output[1] ?? '', new RegExp(CASE_ID));
+      assert.equal(reads, 2, 'final inspection follows the cancelled polling read');
+      assert.equal(mutationCount(h.requests), 1);
+    } finally {
+      clearTimeout(keepAlive);
+    }
+  });
+
+  it('reports expiry and inspects the accepted case when polling token acquisition hits its deadline', { timeout: 2000 }, async () => {
+    let tokenRequests = 0;
+    const h = harness({
+      detail: liveCase({ status: 'investigating', latestProposal: null }),
+      proposals: [],
+      credential: {
+        getToken: (_scope, options) => {
+          if (++tokenRequests !== 3) return Promise.resolve({ token: 'fictional-access-token', expiresOnTimestamp: Date.now() + 60_000 });
+          const signal = options?.abortSignal;
+          assert.ok(signal);
+          return new Promise<never>((_resolve, rejectPromise) => {
+            signal.addEventListener('abort', () => {
+              rejectPromise(new CliError('request_timeout', 'Fictional delayed credential cancellation.'));
+            }, { once: true });
+          });
+        },
+      },
+    });
+    const keepAlive = setTimeout(() => {}, 1000);
+    try {
+      assert.equal(await h.run(['start', ...COMMON, '--idempotency-key', KEY, '--wait-ms', '100', '--poll-ms', '100']), 2);
+      assert.equal(h.errors.length, 0);
+      assert.match(h.output[1] ?? '', /"event":"inspection"/);
+      assert.match(h.output[1] ?? '', /"wait":"expired"/);
+      assert.match(h.output[1] ?? '', new RegExp(CASE_ID));
+      assert.ok(tokenRequests > 3, 'final inspection acquires fresh tokens after the polling deadline');
+      assert.equal(mutationCount(h.requests), 1);
+    } finally {
+      clearTimeout(keepAlive);
+    }
+  });
+
+  it('propagates unrelated polling transport and HTTP failures without treating them as expiry', async () => {
+    for (const failure of [
+      new TypeError('Fictional transport failure.'),
+      new DOMException('Fictional non-poll request timeout.', 'TimeoutError'),
+      new CliError('request_timeout', 'Fictional non-poll credential timeout.'),
+      json({ code: 'dependency_unavailable' }, 503),
+    ]) {
+      let reads = 0;
+      const h = harness({
+        route: (request) => {
+          if (new URL(request.url).pathname !== `/api/cases/${CASE_ID}`) return undefined;
+          reads++;
+          assert.equal(request.signal.aborted, false, 'polling deadline has not expired');
+          if (failure instanceof Response) return failure;
+          throw failure;
+        },
+      });
+      assert.equal(await h.run(['start', ...COMMON, '--idempotency-key', KEY, '--wait-ms', '1000', '--poll-ms', '100']), 1);
+      assert.equal(reads, 1);
+      assert.equal(h.output.length, 1, 'unrelated failures must propagate rather than produce final expiry inspection');
+      assert.match(h.output[0] ?? '', new RegExp(CASE_ID));
+      assert.ok(h.errors.length);
+      assert.doesNotMatch(h.output.join(''), /"wait":"expired"/);
+      assert.equal(mutationCount(h.requests), 1);
+    }
   });
 
   it('also caps poll attempts when an injected clock does not advance', async () => {
