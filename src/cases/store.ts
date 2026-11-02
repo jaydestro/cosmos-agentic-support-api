@@ -218,13 +218,18 @@ function versioned<T extends object>(resource: WithEtag<T>): Versioned<T> {
   return { doc: stripSystemFields(resource), etag };
 }
 
+/**
+ * `partitionKey` is the full `[tenantId, caseId]` key of one logical partition. `null` is a tenant listing: the
+ * query itself must filter `c.tenantId = @tenantId`, which the service routes by the first key path. A partial
+ * (prefix) key in the request options is rejected by the Azure service with HTTP 400 although the emulator accepts it.
+ */
 async function queryResources<T>(
   container: Container,
-  partitionKey: string[],
+  partitionKey: string[] | null,
   query: string,
   parameters: SqlParameter[],
 ): Promise<T[]> {
-  const response = await container.items.query<T>({ query, parameters }, { partitionKey }).fetchAll();
+  const response = await container.items.query<T>({ query, parameters }, partitionKey === null ? {} : { partitionKey }).fetchAll();
   recordCharge(response.requestCharge);
   return response.resources;
 }
@@ -320,7 +325,7 @@ export function createCaseStore(container: Container): CaseStore {
       const predicate = statusPredicate(status, now.toISOString());
       const rows = await queryResources<CaseListRow>(
         container,
-        [tenantId],
+        null,
         `SELECT TOP @top ${projection(CASE_LIST_FIELDS)} FROM c
          WHERE c.tenantId = @tenantId AND c.type = 'case' ${predicate.sql}
          ${after === null ? '' : 'AND c.sortKey < @after'}
@@ -339,7 +344,7 @@ export function createCaseStore(container: Container): CaseStore {
       const predicate = workPredicate(state, now);
       const rows = await queryResources<WorkRow>(
         container,
-        [tenantId],
+        null,
         `SELECT TOP @top ${projection(WORK_FIELDS[predicate.type])} FROM c
          WHERE c.tenantId = @tenantId AND c.type = @type AND ${predicate.sql}
          ${after === null ? '' : 'AND c.workKey < @after'}

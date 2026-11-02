@@ -233,3 +233,16 @@ deployment. Functions, Cosmos DB, storage, telemetry and private networking have
 not been provisioned; no real API, cloud seed or live-model tests have run. An
 authorized administrator must complete the narrowly scoped access bootstrap before
 the deployment identity can execute the full protected deployment.
+
+## 2026-11-01: Azure deployed, proven and documented
+
+Superseded blockers are resolved or restated in [evidence/azure-proof.md](evidence/azure-proof.md), [evidence/github-agentic-workflows.md](evidence/github-agentic-workflows.md) and [evidence/cosmos-agent-kit-rules.md](evidence/cosmos-agent-kit-rules.md); the tutorial is [blog/resolve-cosmos-db-agentic-workflows-tutorial.md](blog/resolve-cosmos-db-agentic-workflows-tutorial.md).
+
+- Node 24.22.2 local gate passed; audit advisory handled by a dated, explicit exception (no patched minimatch exists).
+- Azure East US: Flex Consumption + serverless Cosmos DB + private endpoint + managed identity deployed and exercised; one provider credit under concurrent approvals; seed repeat non-destructive; outside and token denials observed.
+- Azure-only bug: prefix partition key queries return HTTP 400 on the service (accepted by the emulator); fixed in src/cases/store.ts.
+- Not proven: real Entra user tokens (tenant requires a ServiceManagementReference to create an app registration), identity-based host storage (no role-assignment authority), OIDC deployment.
+- GitHub Agentic Workflows: 7 executed runs, 6 agent failures (authentication_failed), no output to accept or reject; about 72 agent credits billed against a soft limit of 2 per run.
+- Costs: Cosmos RU measured from metrics (about 13,000 RU); dollar costs not measured.
+
+- CI note: the first full GitHub run of the service-backed suite exposed failures: fixture outbox items executed by the trigger and a missing wait for the poison notification (both fixed), and an intermittent 90-second timeout in tests/integration/decisions.test.ts (lets exactly one of two competing decisions win) while four investigations run at once. That test failed in 3 of 6 CI attempts on the same code lineage (passed locally on the emulator in every complete run after one early failure). Moving the Cosmos evidence generator out of the shared suite did not remove it, so it is **not** the cause. Root cause not established; the CI log now prints host warnings on failure (	ests/support/cli.ts) so the next failure carries evidence. Treat the service-backed suite as flaky on 2-core runners until then.

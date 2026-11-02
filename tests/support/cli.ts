@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { startControlServer, type ControlServer } from './control.ts';
 import { stackEnvironment } from './env.ts';
@@ -113,7 +115,14 @@ async function runCommand(command: readonly string[], seed: boolean, timeoutSeco
         ? 'the Functions host exited while the command was running'
         : `the command exited with ${String(exitCode)}`;
     try {
-      info(`Diagnostics saved to ${await stack.captureDiagnostics(reason)}`);
+      const directory = await stack.captureDiagnostics(reason);
+      info(`Diagnostics saved to ${directory}`);
+      // Fictional, redacted data only: surface warnings and outbox outcomes in the job log, which has no artifact upload.
+      if (process.env['CI'] !== undefined) {
+        const text = await readFile(join(directory, 'host.log'), 'utf8').catch(() => '');
+        const interesting = text.split(/\r?\n/).filter((line) => /outbox|poison|retry|could not|unhandled|warn|error/i.test(line)).slice(-80);
+        for (const line of interesting) info(`host: ${line.slice(0, 400)}`);
+      }
     } catch (error) {
       fail(`Diagnostics could not be saved: ${error instanceof Error ? error.message : 'unknown error'}`);
     }

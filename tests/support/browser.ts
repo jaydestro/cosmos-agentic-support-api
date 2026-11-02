@@ -45,10 +45,13 @@ export type Form = 'desktop' | 'mobile';
 
 export async function newContext(browser: Browser, form: Form, baseURL: string): Promise<BrowserContext> {
   const shared = { baseURL, locale: 'en-US', timezoneId: 'UTC', reducedMotion: 'reduce', serviceWorkers: 'block' } as const;
+  // Opt-in evidence: RESOLVE_E2E_VIDEO_DIR records one video per page, written when the context closes.
+  const videoDir = process.env['RESOLVE_E2E_VIDEO_DIR'];
+  const video = videoDir === undefined || videoDir === '' ? {} : { recordVideo: { dir: videoDir, size: form === 'mobile' ? { width: 390, height: 844 } : { width: 1280, height: 800 } } };
   const context = await browser.newContext(
     form === 'mobile'
-      ? { ...shared, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
-      : { ...shared, viewport: { width: 1280, height: 800 } },
+      ? { ...shared, ...video, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
+      : { ...shared, ...video, viewport: { width: 1280, height: 800 } },
   );
   context.setDefaultTimeout(20_000);
   context.setDefaultNavigationTimeout(30_000);
@@ -412,6 +415,15 @@ export async function guard(context: BrowserContext, name: string, body: () => v
   } catch (error) {
     await capture(context, name).catch(() => undefined);
     throw error;
+  }
+  // Opt-in evidence: RESOLVE_E2E_CAPTURE_DIR keeps a screenshot after every passing step.
+  const keep = process.env['RESOLVE_E2E_CAPTURE_DIR'];
+  if (keep !== undefined && keep !== '') {
+    mkdirSync(keep, { recursive: true });
+    const slug = name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 60);
+    for (const [index, page] of context.pages().entries()) {
+      await page.screenshot({ path: join(keep, `${slug}-${String(index + 1)}.png`), timeout: 10_000 }).catch(() => undefined);
+    }
   }
 }
 
