@@ -47,6 +47,8 @@ jobs:
           set -euo pipefail
           az bicep install --version v0.39.26
           npm run infra:check
+          az bicep lint --file infra/api-publisher.bicep
+          az bicep build --file infra/api-publisher.bicep --stdout > /dev/null
           npm run test:infra
       - name: Scan source and history with pinned Gitleaks
         run: npm run scan:secrets
@@ -76,3 +78,14 @@ jobs:
       - name: Remove only owned test-stack resources
         if: always()
         run: npm run stack:down
+      - name: Archive the checked production package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: tar -czf "$RUNNER_TEMP/resolve-api.tgz" -C .artifacts/package .
+      - name: Publish only the main deployment package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: resolve-api-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/resolve-api.tgz
+          if-no-files-found: error
+          retention-days: 7

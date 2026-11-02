@@ -21,9 +21,21 @@ it('CI uses bounded read-only jobs, pinned actions and the shared local gates wi
   assert.ok(Array.isArray(stepsInput));
   const stepValues: unknown[] = stepsInput;
   const steps = stepValues.map(record);
+  assert.equal((await readFile(new URL('../../.node-version', import.meta.url), 'utf8')).trim(), '24');
+  assert.equal(record(steps.find((step) => String(step['uses']).startsWith('actions/setup-node'))?.['with'])['node-version-file'], '.node-version');
+  assert.equal(steps.filter((step) => String(step['uses']).startsWith('actions/upload-artifact')).length, 1);
   for (const step of steps) {
     if ('uses' in step) assert.match(String(step['uses']), /^[\w/-]+@[0-9a-f]{40}$/);
-    assert.ok(!String(step['uses']).startsWith('actions/upload-artifact'), 'test diagnostics remain local to the job');
+    if (String(step['uses']).startsWith('actions/upload-artifact')) {
+      assert.equal(step['if'], "github.event_name == 'push' && github.ref == 'refs/heads/main'");
+      assert.deepEqual(step['with'], {
+        name: 'resolve-api-${{ github.sha }}-${{ github.run_attempt }}',
+        path: '${{ runner.temp }}/resolve-api.tgz',
+        'if-no-files-found': 'error',
+        'retention-days': 7,
+      }, 'only the production package is published, never test diagnostics');
+      assert.ok(steps.indexOf(step) > steps.findIndex((entry) => entry['run'] === 'npm run test:service'));
+    }
   }
   const commands = steps.filter((step) => 'run' in step).map((step) => String(step['run']));
   for (const command of ['npm run check', 'npm run scan:secrets', 'npm run test:safety', 'npm run test:service']) {

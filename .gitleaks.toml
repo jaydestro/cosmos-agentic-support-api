@@ -24,3 +24,11 @@ condition = "AND"
 paths = ['''(^|/)tests/unit/web-forms\.test\.ts$''']
 regexTarget = "secret"
 regexes = ['''^ui-0123456789abcdef01234567$''']
+
+[[allowlists]]
+description = "Exact synthetic idempotency fixture in CLI test history, not an authentication credential"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/demo/fixtures\.ts$''']
+regexTarget = "secret"
+regexes = ['''^fictional-duplicate-key-001$''']
