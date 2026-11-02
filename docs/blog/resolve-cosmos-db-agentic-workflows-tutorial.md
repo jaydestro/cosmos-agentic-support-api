@@ -174,11 +174,7 @@ Two workflows were written in Markdown and compiled with `gh aw` v1.0.1 to lock 
 | Reviewer, manual dispatch ([41361417593](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41361417593)) | green; `noop` because there was no PR |
 | Reviewer, pull request ([41362320000](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362320000)) and four later pushes to the same PR | agent job failed `authentication_failed` every time; 0 comments |
 
-**Measured:** each of seven executed runs billed 10 to 11 AI credits to the agent (about 72 in total) against a soft limit of 2 (one very large prompt), plus about
-0.5 credits per run to threat detection. Permissions stayed read-only for the agent, with writes confined to the safe-output job.
-**Not measured:** review quality, time saved, savings of any kind. There is no baseline to compare, and no review or documentation
-change was ever produced for a human to accept or reject. A fine-grained Copilot PAT, creatable only in the GitHub UI, is the
-missing piece. I will not claim a benefit I did not measure.
+**Correction:** the six failures were the `max-ai-credits` guardrail (limit 2; one request costs about 10 credits), not authentication. The workflows even filed their own issues saying so. After raising the soft limit to 15, a reviewer run on a PR (12.06 credits) and a docs-maintainer run (17.82 credits) both finished green and both filed a `noop`. **Measured:** about 72 credits across the seven limited runs plus 30 across the two later ones; agent jobs were read-only and writes were confined to safe outputs. **Not measured:** review quality, time saved, savings, accept/reject (no comment or PR was produced). I will not claim a benefit I did not measure.
 
 ## What a beginner should take away
 

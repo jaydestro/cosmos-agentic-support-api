@@ -84,3 +84,12 @@ accepted or rejected. This was not done here because the PAT cannot be created f
 ## Correction (2026-11-02): the failures were the credit guardrail, not authentication
 
 The harness labelled the failed agent runs `authentication_failed` and the sections above repeat that label. The issues the workflows filed themselves ([#2](https://github.com/jaydestro/cosmos-agentic-support-api/issues/2), [#4](https://github.com/jaydestro/cosmos-agentic-support-api/issues/4)) show the real cause: **AI Credits Budget Exceeded**, used 11.3 of a configured 2 (and 10.1 of 2). Inference did work (the single billed request returned HTTP 200), then the guardrail stopped the run. `max-ai-credits` was raised to 15 for the next runs; results of those runs are appended below when they exist. The statement above that a Copilot PAT is the missing piece is **withdrawn**.
+
+### Runs after the limit was raised to 15
+
+| Run | Workflow | Trigger | Jobs | Agent credits | Detection credits | Safe output |
+|---|---|---|---|---|---|---|
+| [41463187532](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41463187532) | Reviewer | `pull_request` ([PR #6](https://github.com/jaydestro/cosmos-agentic-support-api/pull/6), a workflow-settings-only change) | all 6 green, agent exit 0, 0 retries | 12.06 (381 in / 631 out tokens, 119,593 cache-read) | 0.273 + 0.214 | `noop` (no findings worth a comment); 0 PR comments |
+| [41468118064](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41468118064) | Docs maintainer | `workflow_dispatch` on `main` | all green | 17.82 (453 in / 824 out) | 0.288 + 0.229 | `noop` (no README change proposed); no PR |
+
+What this shows, and does not: both workflows now execute fully under their bounds (read-only agent jobs, writes only in safe outputs, threat detection on, zero retries) and both chose to do nothing, which is a legitimate outcome for these inputs. The docs-maintainer run used 17.82 credits against a soft limit of 15, confirming the cap is advisory. There is still **no review comment or draft PR for a human to accept or reject**, so accept/reject rates, quality and time saved are **not measured**. Wall time: about 6 minutes (reviewer) and 4.5 minutes (maintainer). Dollar cost is not measured.
