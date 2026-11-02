@@ -169,10 +169,10 @@ Two workflows were written in Markdown and compiled with `gh aw` v1.0.1 to lock 
 |---|---|
 | Maintainer, manual dispatch ([41360129792](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41360129792)) | agent job failed `authentication_failed`; no PR |
 | Reviewer, manual dispatch ([41361417593](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41361417593)) | green; `noop` because there was no PR |
-| Reviewer, pull request ([41362320000](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362320000)) | agent job failed `authentication_failed`; 0 comments |
+| Reviewer, pull request ([41362320000](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362320000)) and four later pushes to the same PR | agent job failed `authentication_failed` every time; 0 comments |
 
-**Measured:** each run billed about 10 to 11 AI credits to the agent against a soft limit of 2 (one very large prompt), plus about
-0.5 credits to threat detection. Permissions stayed read-only for the agent, with writes confined to the safe-output job.
+**Measured:** each of seven executed runs billed 10 to 11 AI credits to the agent (about 72 in total) against a soft limit of 2 (one very large prompt), plus about
+0.5 credits per run to threat detection. Permissions stayed read-only for the agent, with writes confined to the safe-output job.
 **Not measured:** review quality, time saved, savings of any kind. There is no baseline to compare, and no review or documentation
 change was ever produced for a human to accept or reject. A fine-grained Copilot PAT, creatable only in the GitHub UI, is the
 missing piece. I will not claim a benefit I did not measure.

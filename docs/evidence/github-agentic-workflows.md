@@ -6,8 +6,8 @@ agent firewall AWF v0.29.0. Everything below was read from the run pages and run
 
 ## Verdict
 
-Both workflows **ran on GitHub** (activation, agent, detection and safe-output jobs executed). Neither produced an
-artifact a human could accept or reject. The agent job failed with `authentication_failed` in two of the three executions
+Both workflows **ran on GitHub** (seven executed runs; an eighth was still running when this was written and is not counted) (activation, agent, detection and safe-output jobs executed). Neither produced an
+artifact a human could accept or reject. The agent job failed with `authentication_failed` in six of the seven executions
 after Copilot inference had already been billed. The one run that finished green ended in a `noop` safe output.
 The compiled bounds held in structure (permissions, one-comment limit, threat detection), but the **soft AI-credit limit of
 2 was exceeded roughly five-fold by one request in every run**. This is the real, measured outcome; no benefit is claimed.
@@ -19,6 +19,8 @@ The compiled bounds held in structure (permissions, one-comment limit, threat de
 | 1 | Documentation/sample maintainer | `workflow_dispatch` on `main` | [41360129792](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41360129792) | activation ok, **agent failed**, detection ok, safe_outputs ok, conclusion failed | `authentication_failed`, 1 attempt, 0 retries (configured) | `report_incomplete` (no PR) | None possible: nothing was proposed |
 | 2 | Contract and Cosmos DB reviewer | `workflow_dispatch` on `main` | [41361417593](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41361417593) | all six jobs succeeded | exit 0 (harness recorded one `authentication_failed` attempt, no retry) | `noop` (manual dispatch has no PR to review, by design) | None possible |
 | 3 | Contract and Cosmos DB reviewer | `pull_request` ([PR #3](https://github.com/jaydestro/cosmos-agentic-support-api/pull/3)) | [41362320000](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362320000) | activation ok, **agent failed**, detection ok, safe_outputs ok, conclusion failed | `authentication_failed`, 1 attempt | `report_incomplete`; PR has 0 comments | None possible |
+
+Runs 4 to 7 are further reviewer runs triggered by pushes to PR #3 (event `pull_request`): [41364262380](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41364262380), [41365236482](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41365236482), [41366028728](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41366028728) and [41367643765](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41367643765). Each failed in the agent job with `authentication_failed`, produced `report_incomplete` and left no PR comment.
 
 Not counted: reviewer runs [41329745600](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41329745600),
 41230031316, 41230648065, 41232057255 and 41236841843 were **skipped** by the approval variable gate. Reviewer runs
@@ -57,7 +59,7 @@ created in the GitHub web UI, so the PAT route was not available to this automat
 | 41361417593 | claude-sonnet-5.5 | 381 | 201 | 39,285 | **10.0985** | claude-haiku-5.5, 0.27 + 0.21 | 4m11s |
 | 41362320000 | claude-sonnet-5.5 | 381 | 161 | 39,288 | **10.0592** | claude-haiku-5.5, 0.28 + 0.22 | 4m34s |
 
-Measured total for the three executed runs: about 31.4 agent credits plus about 1.5 detection credits, against a configured soft
+Runs 4 to 7 each billed 10.06 agent credits (381 input, 161 output, about 39,28x cache-write tokens). Measured total for the seven executed runs: about 71.7 agent credits plus about 0.5 detection credits per run, against a configured soft
 limit of 2 per agent run. The overshoot is a single large prompt (about 40k cache-write tokens of system context and tool
 schemas), which the turn limit cannot prevent. Dollar cost, Actions minutes billed and Copilot premium-request
 accounting are **not measured**. The runtime-model usage of the application (deterministic demo mode) is **not measured**
@@ -69,7 +71,7 @@ because no live model was configured; coding-agent (this session's Copilot) usag
   (`workflows:check`, 139 references, 10 distinct). Permission separation is observable in the lock files above.
 - **Measured:** threat detection and the safe-output job ran in every executed run, and a failed agent produced no write.
 - **Measured limit:** inference authentication on a user-owned repository failed even though one request was billed.
-- **Measured limit:** the soft credit cap was exceeded in all three runs.
+- **Measured limit:** the soft credit cap was exceeded in all seven runs.
 - **Not measured:** review quality, time saved, defects found, maintenance savings. There is no comparable human baseline, so
   none is claimed. No finding or documentation change was ever produced.
 
