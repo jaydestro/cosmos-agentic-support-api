@@ -63,6 +63,7 @@ resource appIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-3
 resource seedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-seed-${suffix}'
   location: location
+  tags: { project: 'resolve', purpose: 'reference-seeding' }
 }
 
 resource model 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (modelAccountName != '') {

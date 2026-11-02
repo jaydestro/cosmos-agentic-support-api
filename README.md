@@ -902,6 +902,36 @@ that protected environment and never use a client secret or publish profile.
    reconciliation; real browser Entra sign-in; correlated telemetry; and approved
    live-model behavior without fallback. None of these is marked passed.
 
+The keyless runner is `pwsh tools/azure/seed-in-vnet.ps1 -ResourceGroup <group>
+-AccountName <account> -SubnetId <full-subnet-resource-id>
+-SeedIdentityName <generated-seed-identity> -SourceCommit <40-character-commit>`.
+It accepts the `resolve-demo-y4chtkiyxiv4k` namespace and requires the generated
+`<prefix>-seed-<suffix>` identity with bootstrap tags `project=resolve`,
+`purpose=reference-seeding` and only the reference-container-scoped native Cosmos
+seeder role from `infra/main.bicep`. The subnet's full subscription/resource-group
+ID must match the validated target. It uses the pinned official Node image and
+immutable source, attaches only the seeder, and runs the guarded seeder twice,
+including independent read-back on each run.
+
+`-WaitTimeoutMinutes` (1–60, default 30) bounds preflight and execution; each native
+CLI process is capped at 60 seconds or the remaining allowance. Cleanup has a
+separate 120-second allowance. Even failed/ambiguous creates trigger an exact-name
+lookup; deletion requires all invocation ownership tags. Only an explicit
+resource-not-found response means absence after an acknowledged create.
+Unacknowledged creates get three lookups, five seconds apart; continued absence
+is reported as uncertain cleanup requiring inspection, not proof of no resource.
+Cleanup failures report the exact resource for operator inspection without hiding
+the original error.
+Azure execution remains **blocked on #10** and requires explicit paid-run approval.
+The executable regressions use PowerShell and a fake native `az` process, with no
+Azure calls: `node --test tests/unit/seed-in-vnet.test.ts` (Node 24; also included
+in `npm run test:unit`).
+Verified on 2026-11-02 with Node 24.22.1 and PowerShell 7.6.9 on Linux: all 40
+runner regressions, `npm run typecheck`, `npm run lint`, `npm run build`,
+`npm run infra:check`, all six `npm run test:infra` tests and
+`npm run scan:secrets` passed. These mocked-process/local results are not Azure
+execution evidence.
+
 References consulted: [Flex hosting](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan),
 [Flex networking](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to#configure-virtual-network-integration),
 [Cosmos serverless](https://learn.microsoft.com/azure/cosmos-db/serverless),

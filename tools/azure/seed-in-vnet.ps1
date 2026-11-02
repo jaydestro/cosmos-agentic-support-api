@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $ResourceGroup,
-  [Parameter(Mandatory)] [ValidatePattern('^[a-z0-9]{3,44}$')] [string] $AccountName,
+  [Parameter(Mandatory)] [ValidatePattern('^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$')] [string] $AccountName,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $SubnetId,
   [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $SeedIdentityName,
   [Parameter(Mandatory)] [ValidatePattern('^[0-9a-fA-F]{40}$')] [string] $SourceCommit,
@@ -14,18 +14,51 @@ $SourceUrl = "https://github.com/jaydestro/cosmos-agentic-support-api/archive/$S
 $NodeImage = 'node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8'
 $ContainerName = "resolve-seed-$([Guid]::NewGuid().ToString('N'))"
 $RunId = [Guid]::NewGuid().ToString('N')
-$ContainerCreated = $false
+$CreateAttempted = $false
+$CreateAcknowledged = $false
 $RunnerExitCode = $null
+$deadline = [DateTime]::UtcNow.AddMinutes($WaitTimeoutMinutes)
 
 function Invoke-Az {
-  param([Parameter(Mandatory)] [string[]] $Arguments)
+  param(
+    [Parameter(Mandatory)] [string[]] $Arguments,
+    [switch] $AllowNotFound
+  )
 
-  $output = & az @Arguments
-  $nativeExitCode = $LASTEXITCODE
-  if ($nativeExitCode -ne 0) {
-    throw "Azure CLI command failed with exit code $nativeExitCode."
+  $remainingMilliseconds = [Math]::Min(60000, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+  if ($remainingMilliseconds -le 0) {
+    throw "The seed runner exceeded the $WaitTimeoutMinutes minute wait limit."
   }
-  return ($output -join [Environment]::NewLine)
+  $azPath = (Get-Command az -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $startInfo = [Diagnostics.ProcessStartInfo]::new($azPath)
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  foreach ($argument in $Arguments) { $startInfo.ArgumentList.Add($argument) }
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = $startInfo
+  try {
+    $null = $process.Start()
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit([int]$remainingMilliseconds)) {
+      $process.Kill($true)
+      $null = $process.WaitForExit(1000)
+      throw "Azure CLI $($Arguments[0..1] -join ' ') exceeded its process deadline."
+    }
+    if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), 1000)) {
+      throw 'Azure CLI output did not close within its process deadline.'
+    }
+    if ($process.ExitCode -ne 0) {
+      if ($AllowNotFound -and $stderr.Result -match '(?m)^ERROR: \((ResourceNotFound|ContainerGroupNotFound)\)') {
+        return $null
+      }
+      throw "Azure CLI $($Arguments[0..1] -join ' ') failed with exit code $($process.ExitCode): $($stderr.Result.Trim())"
+    }
+    return $stdout.Result
+  } finally {
+    $process.Dispose()
+  }
 }
 
 $resourceGroupInfo = (Invoke-Az -Arguments @('group', 'show', '--name', $ResourceGroup, '--output', 'json')) | ConvertFrom-Json
@@ -54,27 +87,29 @@ if (
 
 $identity = (Invoke-Az -Arguments @(
   'identity', 'show', '--resource-group', $ResourceGroup, '--name', $SeedIdentityName,
-  '--query', '{id:id,clientId:clientId,principalId:principalId,name:name}',
+  '--query', '{id:id,clientId:clientId,principalId:principalId,name:name,tags:tags}',
   '--output', 'json'
 )) | ConvertFrom-Json
+if ($AccountName -notmatch '^(?<prefix>[a-z0-9-]{3,12})-(?<suffix>[a-z0-9]{13})$') {
+  throw 'The account name must match the generated Resolve deployment namespace.'
+}
+$deploymentPrefix = $Matches.prefix
+$expectedIdentityName = "$deploymentPrefix-seed-$($Matches.suffix)"
 if (
+  $SeedIdentityName -cne $expectedIdentityName -or
   $identity.name -cne $SeedIdentityName -or
-  -not ([string]$identity.id).StartsWith("$resourceGroupId/providers/Microsoft.ManagedIdentity/userAssignedIdentities/", [StringComparison]::OrdinalIgnoreCase) -or
+  ([string]$identity.id).TrimEnd('/') -ine "$resourceGroupId/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$expectedIdentityName" -or
+  $identity.tags.project -cne 'resolve' -or
+  $identity.tags.purpose -cne 'reference-seeding' -or
   [string]::IsNullOrWhiteSpace([string]$identity.clientId) -or
   [string]::IsNullOrWhiteSpace([string]$identity.principalId)
 ) {
   throw 'The dedicated seed identity could not be validated in the target resource group.'
 }
 
-$subnetPattern = '^/subscriptions/[^/]+/resourceGroups/([^/]+)/providers/Microsoft\.Network/virtualNetworks/([^/]+)/subnets/([^/]+)$'
+$subnetPattern = "^$([Regex]::Escape($resourceGroupId))/providers/Microsoft\.Network/virtualNetworks/[^/]+/subnets/[^/]+$"
 if ($SubnetId -notmatch $subnetPattern) {
-  throw 'SubnetId must be the full resource ID of a subnet.'
-}
-$subnetResourceGroup = $Matches[1]
-$vnetName = $Matches[2]
-$subnetName = $Matches[3]
-if ($subnetResourceGroup -ine $ResourceGroup) {
-  throw 'The seed subnet must be in the specified resource group.'
+  throw 'SubnetId must be a full subnet resource ID in the validated resource group and subscription.'
 }
 
 $subnet = (Invoke-Az -Arguments @(
@@ -88,6 +123,41 @@ if (
   'Microsoft.ContainerInstance/containerGroups' -notin $subnetDelegations
 ) {
   throw 'The specified subnet is not delegated to Azure Container Instances.'
+}
+
+$assignments = @(Invoke-Az -Arguments @(
+  'cosmosdb', 'sql', 'role', 'assignment', 'list', '--resource-group', $ResourceGroup,
+  '--account-name', $AccountName, '--output', 'json'
+) | ConvertFrom-Json | Where-Object { $_.principalId -ieq $identity.principalId })
+$definitions = @(Invoke-Az -Arguments @(
+  'cosmosdb', 'sql', 'role', 'definition', 'list', '--resource-group', $ResourceGroup,
+  '--account-name', $AccountName, '--output', 'json'
+) | ConvertFrom-Json)
+$itemAction = 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items'
+$expectedActions = @(
+  'Microsoft.DocumentDB/databaseAccounts/readMetadata',
+  'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery',
+  'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/readChangeFeed',
+  "$itemAction/read", "$itemAction/create"
+)
+if ($assignments.Count -eq 0) {
+  throw 'The reference-seeder native Cosmos role grant is missing; role bootstrap remains blocked on #10.'
+}
+foreach ($assignment in $assignments) {
+  $definition = @($definitions | Where-Object { $_.id -ieq $assignment.roleDefinitionId })
+  if (
+    $assignment.scope -ine "$accountId/dbs/resolve/colls/reference" -or
+    $definition.Count -ne 1 -or
+    $definition[0].roleName -cne "$deploymentPrefix-reference-seeder" -or
+    $definition[0].type -cne 'CustomRole' -or
+    @($definition[0].assignableScopes).Count -ne 1 -or
+    $definition[0].assignableScopes[0] -ine $accountId -or
+    @($definition[0].permissions).Count -ne 1 -or
+    @($definition[0].permissions[0].notDataActions | Where-Object { $null -ne $_ }).Count -gt 0 -or
+    @(Compare-Object $expectedActions @($definition[0].permissions[0].dataActions)).Count -ne 0
+  ) {
+    throw 'The seed identity must have only the deployment reference-seeder native Cosmos permissions at reference-container scope.'
+  }
 }
 
 $runnerCommand = @'
@@ -105,8 +175,9 @@ timeout --kill-after=15s 10m node tools/seed/main.ts --target cloud --confirm-ac
 $encodedRunnerCommand = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($runnerCommand))
 $containerCommand = "sh -c 'printf %s $encodedRunnerCommand | base64 -d | sh'"
 
-$timer = [Diagnostics.Stopwatch]::StartNew()
+$originalError = $null
 try {
+  $CreateAttempted = $true
   $null = Invoke-Az -Arguments @(
     'container', 'create',
     '--resource-group', $ResourceGroup,
@@ -116,8 +187,7 @@ try {
     '--cpu', '1',
     '--memory', '1.5',
     '--restart-policy', 'Never',
-    '--vnet', $vnetName,
-    '--subnet', $subnetName,
+    '--subnet', $SubnetId,
     '--assign-identity', [string]$identity.id,
     '--tags', 'managedBy=seed-in-vnet.ps1', "runId=$RunId", "sourceCommit=$SourceCommit",
     '--environment-variables',
@@ -129,9 +199,9 @@ try {
     "SEED_PRINCIPAL_ID=$($identity.principalId)",
     "SOURCE_URL=$SourceUrl",
     '--command-line', $containerCommand,
-    '--output', 'none'
+    '--no-wait', '--output', 'none'
   )
-  $ContainerCreated = $true
+  $CreateAcknowledged = $true
 
   $attachedIdentityJson = Invoke-Az -Arguments @(
     'container', 'show', '--resource-group', $ResourceGroup, '--name', $ContainerName,
@@ -148,7 +218,7 @@ try {
   }
 
   $terminalState = $null
-  while ($timer.Elapsed.TotalSeconds -lt ($WaitTimeoutMinutes * 60)) {
+  while ([DateTime]::UtcNow -lt $deadline) {
     $currentStateJson = Invoke-Az -Arguments @(
       'container', 'show', '--resource-group', $ResourceGroup, '--name', $ContainerName,
       '--query', 'containers[0].instanceView.currentState', '--output', 'json'
@@ -159,7 +229,7 @@ try {
       break
     }
 
-    $remainingSeconds = ($WaitTimeoutMinutes * 60) - $timer.Elapsed.TotalSeconds
+    $remainingSeconds = ($deadline - [DateTime]::UtcNow).TotalSeconds
     if ($remainingSeconds -gt 0) {
       Start-Sleep -Seconds ([int][Math]::Min(15, [Math]::Ceiling($remainingSeconds)))
     }
@@ -172,22 +242,53 @@ try {
     throw "The seed container stopped in unexpected state '$($terminalState.state)'."
   }
 
-  $logs = Invoke-Az -Arguments @('container', 'logs', '--resource-group', $ResourceGroup, '--name', $ContainerName)
-  if (-not [string]::IsNullOrWhiteSpace($logs)) {
-    Write-Output $logs
-  }
   $RunnerExitCode = [int]$terminalState.exitCode
-} finally {
-  if ($ContainerCreated) {
-    $cleanupTagsJson = Invoke-Az -Arguments @(
-      'container', 'show', '--resource-group', $ResourceGroup, '--name', $ContainerName,
-      '--query', 'tags', '--output', 'json'
-    )
-    $cleanupTags = $cleanupTagsJson | ConvertFrom-Json
-    if ($cleanupTags.managedBy -cne 'seed-in-vnet.ps1' -or $cleanupTags.runId -cne $RunId) {
-      throw 'Refusing to delete a container group not owned by this invocation.'
+  if ($RunnerExitCode -ne 0) {
+    $originalError = "The seed container exited with code $RunnerExitCode."
+  }
+  try {
+    $logs = Invoke-Az -Arguments @('container', 'logs', '--resource-group', $ResourceGroup, '--name', $ContainerName)
+    if (-not [string]::IsNullOrWhiteSpace($logs)) {
+      Write-Output $logs
     }
-    $null = Invoke-Az -Arguments @('container', 'delete', '--resource-group', $ResourceGroup, '--name', $ContainerName, '--yes', '--output', 'none')
+  } catch {
+    if ($RunnerExitCode -eq 0) { throw }
+    [Console]::Error.WriteLine("Seed log retrieval failed: $($_.Exception.Message)")
+  }
+} catch {
+  $originalError = $_
+  throw
+} finally {
+  if ($CreateAttempted) {
+    # Cleanup has its own bounded allowance even when the execution deadline has expired.
+    $deadline = [DateTime]::UtcNow.AddSeconds(120)
+    try {
+      for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $cleanupTagsJson = Invoke-Az -AllowNotFound -Arguments @(
+          'container', 'show', '--resource-group', $ResourceGroup, '--name', $ContainerName,
+          '--query', 'tags', '--output', 'json'
+        )
+        if ($null -ne $cleanupTagsJson -or $CreateAcknowledged) { break }
+        if ($attempt -lt 3) { Start-Sleep -Seconds 5 }
+      }
+      if ($null -eq $cleanupTagsJson -and -not $CreateAcknowledged) {
+        throw 'Create was not acknowledged and the container is still not visible after reconciliation; inspect this exact name for delayed creation.'
+      }
+      if ($null -ne $cleanupTagsJson) {
+        $cleanupTags = $cleanupTagsJson | ConvertFrom-Json
+        if ($cleanupTags.managedBy -cne 'seed-in-vnet.ps1' -or $cleanupTags.runId -cne $RunId -or $cleanupTags.sourceCommit -cne $SourceCommit) {
+          throw 'Refusing to delete a container group not owned by this invocation.'
+        }
+        $null = Invoke-Az -Arguments @('container', 'delete', '--resource-group', $ResourceGroup, '--name', $ContainerName, '--yes', '--output', 'none')
+      }
+    } catch {
+      $cleanupMessage = "Cleanup failed for '$ResourceGroup/$ContainerName': $($_.Exception.Message)"
+      if ($null -ne $originalError) {
+        [Console]::Error.WriteLine($cleanupMessage)
+      } else {
+        throw $cleanupMessage
+      }
+    }
   }
 }
 
