@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CliError, parseArgs, validateBaseUrl, validateScope } from '../../tools/demo/args.ts';
 import { runCli } from '../../tools/demo/cli.ts';
-import { createDemoClient, apiValue } from '../../tools/demo/transport.ts';
+import { createDemoClient, apiValue, MAX_API_RESPONSE_BYTES } from '../../tools/demo/transport.ts';
 import {
   CASE_ID, COMMON, DIGEST, KEY, NOW, decision, event, harness, json, liveCase, liveProposal, usageEvent,
 } from '../demo/fixtures.ts';
@@ -136,7 +136,7 @@ describe('typed delegated transport', () => {
     });
     const keepAlive = setTimeout(() => {}, 1000);
     try {
-      await assert.rejects(apiValue(client.GET('/session')), /fictional fetch aborted/);
+      await assert.rejects(apiValue(client.GET('/session')), (error: unknown) => error instanceof CliError && error.code === 'request_timeout');
     } finally {
       clearTimeout(keepAlive);
     }
@@ -158,10 +158,37 @@ describe('typed delegated transport', () => {
     });
     const keepAlive = setTimeout(() => {}, 1000);
     try {
-      await assert.rejects(apiValue(client.GET('/session')), /fictional body aborted/);
+      await assert.rejects(apiValue(client.GET('/session')), (error: unknown) => error instanceof CliError && error.code === 'request_timeout');
     } finally {
       clearTimeout(keepAlive);
     }
+  });
+
+  it('bounds a fetch and response stream that ignore abort signals entirely', { timeout: 2000 }, async () => {
+    for (const fetchImpl of [
+      (): Promise<Response> => new Promise(() => {}),
+      (): Promise<Response> => Promise.resolve(new Response(new ReadableStream<Uint8Array>(), {
+        headers: { 'Content-Type': 'application/json' },
+      })),
+    ]) {
+      const h = harness();
+      const client = createDemoClient({ baseUrl: 'https://resolve.test/api', scope: 'api://app/.default', timeoutMs: 100 }, {
+        credential: h.credential,
+        fetch: fetchImpl,
+      });
+      await assert.rejects(apiValue(client.GET('/session')),
+        (error: unknown) => error instanceof CliError && error.code === 'request_timeout');
+    }
+  });
+
+  it('refuses an oversized response before JSON parsing', async () => {
+    const h = harness();
+    const client = createDemoClient({ baseUrl: 'https://resolve.test/api', scope: 'api://app/.default', timeoutMs: 1000 }, {
+      credential: h.credential,
+      fetch: () => Promise.resolve(new Response('x'.repeat(MAX_API_RESPONSE_BYTES + 1))),
+    });
+    await assert.rejects(apiValue(client.GET('/session')),
+      (error: unknown) => error instanceof CliError && error.code === 'response_too_large');
   });
 
   it('fails HTTP errors, redirects, invalid JSON and empty successes rather than inventing success', async () => {

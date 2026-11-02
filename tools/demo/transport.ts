@@ -7,6 +7,8 @@ export interface TransportDependencies {
   readonly fetch?: typeof globalThis.fetch;
 }
 
+export const MAX_API_RESPONSE_BYTES = 1024 * 1024;
+
 async function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
   let onAbort: () => void = () => {};
@@ -29,26 +31,62 @@ export function createDemoClient(options: ConnectionOptions, dependencies: Trans
     throw new CliError('invalid_arguments', 'Request timeout must be 100–60000 milliseconds.');
   }
   const credential = dependencies.credential ?? new AzureCliCredential({ processTimeoutInMs: options.timeoutMs });
-  const client = createResolveClient({ baseUrl, ...(dependencies.fetch === undefined ? {} : { fetch: dependencies.fetch }) });
-  client.use({
-    async onRequest({ request }) {
-      const signal = AbortSignal.any([request.signal, AbortSignal.timeout(options.timeoutMs)]);
+  const fetchImpl = dependencies.fetch ?? globalThis.fetch;
+  const boundedFetch: typeof fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const deadline = new AbortController();
+      // Keep a strong, referenced deadline until the response has been consumed.
+      const timer = setTimeout(() => { deadline.abort(); }, options.timeoutMs);
+      const signal = AbortSignal.any([request.signal, deadline.signal]);
       const bounded = new Request(request, { signal, redirect: 'error' });
-      signal.throwIfAborted();
-      const token = await abortable(credential.getToken(scope, { abortSignal: signal }), signal);
-      if (!token.token || token.expiresOnTimestamp <= Date.now()) {
-        throw new CliError('authentication_failed', 'Azure CLI did not return a usable access token.');
+      try {
+        signal.throwIfAborted();
+        const token = await abortable(credential.getToken(scope, { abortSignal: signal }), signal);
+        if (!token.token || token.expiresOnTimestamp <= Date.now()) {
+          throw new CliError('authentication_failed', 'Azure CLI did not return a usable access token.');
+        }
+        bounded.headers.set('Authorization', `Bearer ${token.token}`);
+        bounded.headers.set('Accept', 'application/json, application/problem+json');
+        if (bounded.body !== null) {
+          const body = await abortable(bounded.clone().text(), signal);
+          bounded.headers.set('Content-Length', String(Buffer.byteLength(body)));
+        }
+        const response = await abortable(fetchImpl(bounded), signal);
+        if (response.body === null) return response;
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        try {
+          for (;;) {
+            const result = await abortable(reader.read(), signal);
+            if (result.done) break;
+            const value: unknown = result.value;
+            assertBytes(value);
+            size += value.byteLength;
+            if (size > MAX_API_RESPONSE_BYTES) {
+              throw new CliError('response_too_large', 'Resolve API response exceeds the size limit.');
+            }
+            chunks.push(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        return new Response(Buffer.concat(chunks), {
+          status: response.status, statusText: response.statusText, headers: response.headers,
+        });
+      } catch (error) {
+        if (signal.aborted) throw new CliError('request_timeout', 'Request cancelled or timed out.');
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        deadline.abort();
       }
-      bounded.headers.set('Authorization', `Bearer ${token.token}`);
-      bounded.headers.set('Accept', 'application/json, application/problem+json');
-      if (bounded.body !== null) {
-        bounded.headers.set('Content-Length', String(Buffer.byteLength(await bounded.clone().text())));
-      }
-      signal.throwIfAborted();
-      return bounded;
-    },
-  });
-  return client;
+  };
+  return createResolveClient({ baseUrl, fetch: boundedFetch });
+}
+
+function assertBytes(value: unknown): asserts value is Uint8Array {
+  if (!(value instanceof Uint8Array)) throw new CliError('invalid_response', 'Resolve API returned an invalid byte stream.');
 }
 
 interface Reply<T> {

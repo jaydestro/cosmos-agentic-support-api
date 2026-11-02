@@ -77,7 +77,7 @@ on the scoped bootstrap above, not on a missing browser console.
 
 The CLI is exercised against the real local HTTP host, change-feed trigger and
 provider ledger by `tests/integration/demo-cli.test.ts` (one test passed).
-Its 38 unit checks passed, as did the eight infrastructure checks, typecheck and lint.
+Its 40 unit checks passed, as did nine infrastructure checks, typecheck and lint.
 Local Core Tools 4.15.2 failed startup with `Value cannot be null (provider)`;
 the same integration command passed with the CI-pinned 4.16.0 in an isolated
 `.local/core-tools-4.16.0` directory, without changing the global installation.
@@ -119,6 +119,9 @@ The first CI secret scan flagged a deliberately synthetic idempotency fixture,
 not a credential. The current literal was simplified; a path-and-exact-value
 history allowance covers only the old test marker. Scanner tests prove that the
 same marker elsewhere and a generated credential-shaped probe still fail.
+Request deadlines now cover token acquisition, fetch and bounded response-body
+consumption with a referenced timer; they do not depend on a fetch implementation
+honouring abort signals. Responses are limited to 1 MiB before JSON parsing.
 
 | Stage | Scope | Status |
 |---|---|---|
