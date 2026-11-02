@@ -169,6 +169,37 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (process.env['MODE'] === 'await-external') {
+    // A case created by a synthetic principal is approved from outside by a real Entra Approver token.
+    const externalKey = `azure-external-${randomUUID()}`;
+    const externalBody = {
+      accountId: 'acct_aurora_0001',
+      invoiceIds: ['inv_aurora_0001_a', 'inv_aurora_0001_b'],
+      category: 'duplicate_charge',
+      requestedCredit: { amountMinor: 4900, currency: 'USD' },
+      description: 'The same invoice appears to have been charged twice this month.',
+    };
+    const made = await call('createCase', 'rep', { body: externalBody, headers: { 'Idempotency-Key': externalKey } });
+    const externalCase = String((made.body?.['case'] as Record<string, unknown> | undefined)?.['caseId']);
+    out(`EXTERNAL_CASE_ID=${externalCase}`);
+    await waitStatus(externalCase, 'awaiting_approval');
+    out('EXTERNAL_CASE_AWAITING_APPROVAL');
+    await until(`external approval of ${externalCase}`, async () => {
+      const reply = await call('getCase', 'rep', { path: { caseId: externalCase } });
+      return reply.body?.['status'] === 'credited' ? true : undefined;
+    }, 1_200_000);
+    const external = await appCosmos
+      .database(database)
+      .container('provider')
+      .items.query<Record<string, unknown>>({ query: "SELECT c.id, c.amount, c.reference FROM c WHERE c.type = 'provider_credit' AND c.caseId = @c", parameters: [{ name: '@c', value: externalCase }] }, { partitionKey: 'aurora' })
+      .fetchAll();
+    out(`- externally approved case credited; provider ledger records: **${String(external.resources.length)}** ${JSON.stringify(external.resources)}`);
+    if (external.resources.length !== 1) process.exitCode = 1;
+    appCosmos.dispose();
+    seedCosmos.dispose();
+    return;
+  }
+
   out('## End-to-end credit through the deployed Functions host (change-feed trigger, leases)');
   const key = `azure-proof-${randomUUID()}`;
   const body = {

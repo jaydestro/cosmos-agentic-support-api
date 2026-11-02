@@ -28,7 +28,7 @@ prepared infrastructure do not satisfy that criterion.
 | P04 | Decisions and execution: approve/reject/revise, outbox, provider, recovery | **done** (emulator-backed; see "Verified commands") |
 | P05 | Browser console and bounded live-model adapter | **local implementation verified**; real Entra/model checks blocked pending configuration and paid-run approval |
 | P06 | Shared local/CI checks and GitHub Actions gates | **passed on GitHub** ([Resolve checks](https://github.com/jaydestro/cosmos-agentic-support-api/actions/runs/41362319982)); the dev-only audit advisory is an explicit, dated exception in `tests/support/audit.ts`, not hidden |
-| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | **Deployed and proven on Azure (East US)** with a keys fallback and no Entra app registration; see [docs/evidence/azure-proof.md](docs/evidence/azure-proof.md). OIDC deployment, real Entra sign-in and `supportingAuth=identity` are **not proven** |
+| P07 | Deployment: Bicep vs azd comparison, validation, private networking, OIDC | **Deployed and proven on Azure (East US)** with a keys fallback; real Entra tokens prove role, tenant and separation-of-duties denials and an external approval ([docs/evidence/entra-proof.md](docs/evidence/entra-proof.md)). OIDC deployment, interactive browser sign-in and `supportingAuth=identity` are **not proven** |
 | P08 | Repository assistance (GitHub Agentic Workflows) and completion | Both workflows **ran on GitHub** (7 executed runs; skipped runs not counted); the agent failed `authentication_failed` in 6 of 7 and no output was produced for a human to accept; see [docs/evidence/github-agentic-workflows.md](docs/evidence/github-agentic-workflows.md) |
 
 ### Delivery update (2026-11-01)

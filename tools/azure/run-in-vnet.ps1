@@ -6,7 +6,8 @@ param(
   [Parameter(Mandatory)] [string] $EntraTenantId,
   [Parameter(Mandatory)] [string] $ApiAudience,
   [string] $LogFile = '.local/azure-proof-runner.log',
-  [switch] $ProbeOnly
+  [switch] $ProbeOnly,
+  [switch] $AwaitExternal
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path "$PSScriptRoot/../.."
@@ -16,15 +17,16 @@ $key = az storage account keys list -g $ResourceGroup -n $storage --query "[0].v
 $app = az identity show -g $ResourceGroup -n "resolve-app-$suffix" --query "{id:id,c:clientId}" -o json | ConvertFrom-Json
 $seed = az identity show -g $ResourceGroup -n "resolve-seed-$suffix" --query "{id:id,c:clientId,p:principalId}" -o json | ConvertFrom-Json
 
-$stage = Join-Path $root '.local/runner'
-Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+$stage = Join-Path $root ".local/runner-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
 New-Item -ItemType Directory $stage | Out-Null
 Copy-Item (Join-Path $root '.artifacts/package/*') $stage -Recurse
 Copy-Item (Join-Path $root 'src'), (Join-Path $root 'tools') -Destination $stage -Recurse
 tar -czf (Join-Path $root '.local/runner.tgz') -C $stage .
 az storage share-rm create -g $ResourceGroup --storage-account $storage -n runner --quota 1 -o none
 az storage file upload --account-name $storage --account-key $key --share-name runner --source (Join-Path $root '.local/runner.tgz') --path runner.tgz -o none
-az storage file upload --account-name $storage --account-key $key --share-name runner --source (Join-Path $PSScriptRoot 'run.sh') --path run.sh -o none
+$lf = Join-Path $root '.local/run.sh'
+[IO.File]::WriteAllText($lf, ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'run.sh')) -replace "`r`n", "`n"))
+az storage file upload --account-name $storage --account-key $key --share-name runner --source $lf --path run.sh -o none
 
 az container delete -g $ResourceGroup -n resolve-proof-runner --yes -o none 2>$null
 az container create -g $ResourceGroup -n resolve-proof-runner --image node:24-slim --os-type Linux --cpu 1 --memory 1.5 `
@@ -32,7 +34,7 @@ az container create -g $ResourceGroup -n resolve-proof-runner --image node:24-sl
   --azure-file-volume-account-name $storage --azure-file-volume-account-key $key --azure-file-volume-share-name runner --azure-file-volume-mount-path /mnt/runner `
   --environment-variables RESOLVE_ENV=azure COSMOS_ACCOUNT_NAME="resolve-$suffix" COSMOS_ENDPOINT="https://resolve-$suffix.documents.azure.com:443/" `
   COSMOS_AUTH=managed-identity AZURE_CLIENT_ID=$($app.c) AUTH_MODE=entra ENTRA_TENANT_ID=$EntraTenantId ENTRA_AUDIENCE=$ApiAudience `
-  SEED_CLIENT_ID=$($seed.c) SEED_PRINCIPAL_ID=$($seed.p) PROBE_ONLY=$(if ($ProbeOnly) { '1' } else { '0' }) --command-line "sh /mnt/runner/run.sh" -o none
+  SEED_CLIENT_ID=$($seed.c) SEED_PRINCIPAL_ID=$($seed.p) PROBE_ONLY=$(if ($ProbeOnly) { '1' } else { '0' }) MODE=$(if ($AwaitExternal) { 'await-external' } else { 'full' }) --command-line "sh /mnt/runner/run.sh" -o none
 
 do {
   Start-Sleep 20
