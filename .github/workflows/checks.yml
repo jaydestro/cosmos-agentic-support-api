@@ -76,3 +76,14 @@ jobs:
       - name: Remove only owned test-stack resources
         if: always()
         run: npm run stack:down
+      - name: Archive the checked production package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: tar -czf "$RUNNER_TEMP/resolve-api.tgz" -C .artifacts/package .
+      - name: Publish only the main deployment package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: resolve-api-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/resolve-api.tgz
+          if-no-files-found: error
+          retention-days: 7

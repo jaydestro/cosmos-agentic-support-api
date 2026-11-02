@@ -1,0 +1,151 @@
+name: Resolve API CD (protected prebuilt package)
+on:
+  workflow_run:
+    workflows: [Resolve checks]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+concurrency:
+  group: resolve-azure-proof
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.AZURE_API_CD_ENABLED == 'true'
+    environment: azure-demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      CI_SHA: ${{ github.event.workflow_run.head_sha }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      APP_NAME: ${{ vars.AZURE_FUNCTION_APP_NAME }}
+      CLIENT_ID: ${{ vars.AZURE_DEPLOY_CLIENT_ID }}
+      TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Require protected environment, exact CI provenance and configured target
+        id: guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in RESOURCE_GROUP APP_NAME CLIENT_ID TENANT_ID SUBSCRIPTION_ID; do
+            test -n "${!name}" || { echo "::error::Missing $name"; exit 1; }
+          done
+          [[ "$RESOURCE_GROUP" =~ ^[a-zA-Z0-9_-]{1,90}$ ]]
+          [[ "$APP_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,58}[a-zA-Z0-9]$ ]]
+          for name in CLIENT_ID TENANT_ID SUBSCRIPTION_ID; do
+            [[ "${!name}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+          done
+          [[ "$CI_RUN_ID" =~ ^[0-9]+$ && "$CI_RUN_ATTEMPT" =~ ^[0-9]+$ && "$CI_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/environments/azure-demo" |
+            jq -e 'any(.protection_rules[];
+              .type == "required_reviewers" and .prevent_self_review == true and (.reviewers | length) > 0)'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" |
+            jq -e --arg sha "$CI_SHA" --arg repo "$GITHUB_REPOSITORY" --argjson attempt "$CI_RUN_ATTEMPT" '
+              .path == ".github/workflows/checks.yml" and .event == "push" and
+              .status == "completed" and .conclusion == "success" and .head_branch == "main" and
+              .head_repository.full_name == $repo and .head_sha == $sha and .run_attempt == $attempt'
+          echo "Build: passed main CI run $CI_RUN_ID attempt $CI_RUN_ATTEMPT at $CI_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Download only the successful CI run package
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: resolve-api-${{ env.CI_SHA }}-${{ env.CI_RUN_ATTEMPT }}
+          run-id: ${{ env.CI_RUN_ID }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: ${{ runner.temp }}/resolve-artifact
+      - name: Unpack without rebuilding
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/resolve-package"
+          tar -xzf "$RUNNER_TEMP/resolve-artifact/resolve-api.tgz" -C "$RUNNER_TEMP/resolve-package"
+          test -f "$RUNNER_TEMP/resolve-package/host.json"
+          test -f "$RUNNER_TEMP/resolve-package/dist/src/index.js"
+          test -d "$RUNNER_TEMP/resolve-package/node_modules"
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.CLIENT_ID }}
+          tenant-id: ${{ env.TENANT_ID }}
+          subscription-id: ${{ env.SUBSCRIPTION_ID }}
+      - name: Verify the preprovisioned Linux Node 24 Flex target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(az account show --query id -o tsv)" = "$SUBSCRIPTION_ID"
+          app=$(az functionapp show --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" -o json)
+          expected="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Web/sites/$APP_NAME"
+          jq -e --arg expected "$expected" '
+            (.id | ascii_downcase) == ($expected | ascii_downcase) and
+            (.kind | split(",") | index("functionapp") != null and index("linux") != null) and
+            .reserved == true and .httpsOnly == true and .publicNetworkAccess == "Enabled" and
+            .functionAppConfig.runtime == {"name":"node","version":"24"} and
+            ((.functionAppConfig.scaleAndConcurrency.alwaysReady // []) | length) == 0
+          ' <<< "$app"
+          plan=$(jq -er '.serverFarmId' <<< "$app")
+          az appservice plan show --ids "$plan" -o json |
+            jq -e '.sku.name == "FC1" and .sku.tier == "FlexConsumption" and .reserved == true'
+          host=$(jq -er '.defaultHostName' <<< "$app")
+          [[ "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*\.azurewebsites\.net$ ]]
+          echo "base_url=https://$host" >> "$GITHUB_OUTPUT"
+      - name: Deploy prebuilt package through Flex OneDeploy
+        id: deploy
+        uses: Azure/functions-action@c5060b3b8bb1ebbcb531abd00c822ecbaa8ea656 # v1
+        with:
+          app-name: ${{ env.APP_NAME }}
+          package: ${{ runner.temp }}/resolve-package
+          sku: flexconsumption
+          remote-build: false
+      - name: Unauthenticated HTTP smoke (not identity or private-network proof)
+        id: smoke
+        timeout-minutes: 5
+        env:
+          BASE_URL: ${{ steps.target.outputs.base_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for endpoint in health ready; do
+            passed=false
+            for attempt in {1..12}; do
+              if code=$(curl --silent --show-error --proto '=https' --connect-timeout 5 --max-time 10 \
+                --output "$RUNNER_TEMP/smoke.json" --write-out '%{http_code}' "$BASE_URL/$endpoint") &&
+                [[ "$code" == 200 ]] && jq -e -s '. == [{"status":"ok"}]' "$RUNNER_TEMP/smoke.json"; then
+                passed=true
+                break
+              fi
+              sleep 5
+            done
+            [[ "$passed" == true ]]
+          done
+          code=$(curl --silent --show-error --proto '=https' --connect-timeout 5 --max-time 10 \
+            --output /dev/null --write-out '%{http_code}' "$BASE_URL/cases")
+          [[ "$code" == 401 ]]
+      - name: Report deployment and smoke separately
+        if: always()
+        env:
+          BUILD_RESULT: ${{ steps.guard.outcome }}
+          DEPLOY_RESULT: ${{ steps.deploy.outcome }}
+          SMOKE_RESULT: ${{ steps.smoke.outcome }}
+        run: |
+          {
+            echo "Build provenance: $BUILD_RESULT"
+            echo "Deploy: $DEPLOY_RESULT"
+            echo "Unauthenticated HTTP smoke: $SMOKE_RESULT"
+            echo "BLOCKED / not run here: real-token role denials, managed-identity data/lease access, private DNS, outside-network denial, cloud repeat seeding, and live-model checks."
+          } >> "$GITHUB_STEP_SUMMARY"
